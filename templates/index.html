@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fanficthing</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="app">
+        <header>
+            <h1>Fanficthing</h1>
+            <p class="subtitle">Your offline AO3 reader</p>
+        </header>
+
+        <div class="add-form">
+            <input type="text" id="url-input" placeholder="Paste an AO3 link..." autocomplete="off" spellcheck="false">
+            <button id="add-btn" onclick="addWork()">
+                <span id="btn-text">Download</span>
+            </button>
+        </div>
+        <div id="status" class="status"></div>
+
+        <div class="library">
+            {% for work in works %}
+            <div class="work-card" data-id="{{ work.id }}">
+                <div class="work-card-body" onclick="window.location='/read/{{ work.id }}'">
+                    <div class="work-rating">{{ work.rating }}</div>
+                    <h2 class="work-title">{{ work.title }}</h2>
+                    <p class="work-author">by {{ work.author }}</p>
+                    <p class="work-fandom">{{ work.fandom }}</p>
+                    <div class="work-meta">
+                        <span>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
+                            {{ work.total_chapters }} chapters
+                        </span>
+                        <span>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                            {{ work.last_updated }}
+                        </span>
+                    </div>
+                </div>
+                <div class="work-card-actions">
+                    <button class="btn-sm btn-update" onclick="event.stopPropagation(); updateWork({{ work.id }}, this)">Check for updates</button>
+                    <button class="btn-sm btn-delete" onclick="event.stopPropagation(); deleteWork({{ work.id }})">Remove</button>
+                </div>
+            </div>
+            {% endfor %}
+
+            {% if not works %}
+            <div class="empty-state">
+                <p>~</p>
+                <p>Your library is empty. Paste an AO3 link above to get started.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        function setStatus(msg, type = 'info') {
+            const el = document.getElementById('status');
+            el.textContent = msg;
+            el.className = 'status ' + type;
+        }
+
+        function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+        async function pollJob(jobId) {
+            let dots = 0;
+            while (true) {
+                await sleep(2000);
+                const resp = await fetch(`/api/job/${jobId}`);
+                const text = await resp.text();
+                let data;
+                try { data = JSON.parse(text); } catch { throw new Error('Lost connection to server'); }
+
+                if (data.status === 'done') {
+                    return data;
+                } else if (data.status === 'error') {
+                    throw new Error(data.error || 'Download failed');
+                }
+                // Still working — update the status with a little animation
+                dots = (dots + 1) % 4;
+                setStatus('Downloading from AO3' + '.'.repeat(dots + 1) + ' (this can take a few minutes for long fics)', 'info');
+            }
+        }
+
+        async function addWork() {
+            const input = document.getElementById('url-input');
+            const url = input.value.trim();
+            if (!url) return;
+
+            const btn = document.getElementById('add-btn');
+            const btnText = document.getElementById('btn-text');
+            btn.disabled = true;
+            btnText.innerHTML = '<span class="spinner"></span>Downloading...';
+            setStatus('Starting download...', 'info');
+
+            try {
+                const resp = await fetch('/api/add', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({url}),
+                });
+                const text = await resp.text();
+                let data;
+                try { data = JSON.parse(text); } catch { throw new Error(text || 'Server returned an invalid response'); }
+                if (!resp.ok) {
+                    throw new Error(data.detail || 'Failed to download');
+                }
+
+                // If already in library, it returns immediately with status: done
+                if (data.status === 'done') {
+                    setStatus(`"${data.title}" is already in your library.`, 'info');
+                    input.value = '';
+                    setTimeout(() => location.reload(), 800);
+                    return;
+                }
+
+                // Otherwise we got a job_id — poll for completion
+                if (data.job_id) {
+                    setStatus('Downloading from AO3... (this can take a few minutes for long fics)', 'info');
+                    const result = await pollJob(data.job_id);
+                    setStatus(`Downloaded "${result.title}" (${result.chapters} chapters)`, 'success');
+                    input.value = '';
+                    setTimeout(() => location.reload(), 800);
+                }
+            } catch (e) {
+                setStatus(e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btnText.textContent = 'Download';
+            }
+        }
+
+        async function updateWork(id, btn) {
+            const original = btn.textContent;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>Checking...';
+            try {
+                const resp = await fetch(`/api/update/${id}`, {method: 'POST'});
+                const text = await resp.text();
+                let data;
+                try { data = JSON.parse(text); } catch { throw new Error('Update check failed'); }
+                if (!resp.ok) throw new Error(data.detail || 'Update check failed');
+                if (data.updated > 0) {
+                    setStatus(`Found ${data.updated} new chapter(s)!`, 'success');
+                    setTimeout(() => location.reload(), 800);
+                } else {
+                    setStatus('Already up to date.', 'info');
+                }
+            } catch (e) {
+                setStatus(e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = original;
+            }
+        }
+
+        async function deleteWork(id) {
+            if (!confirm('Remove this fanfic from your library?')) return;
+            const card = document.querySelector(`[data-id="${id}"]`);
+            card.style.transition = 'all 0.3s ease';
+            card.style.opacity = '0';
+            card.style.transform = 'translateY(-10px)';
+            await fetch(`/api/works/${id}`, {method: 'DELETE'});
+            setTimeout(() => card.remove(), 300);
+        }
+
+        document.getElementById('url-input').addEventListener('keydown', e => {
+            if (e.key === 'Enter') addWork();
+        });
+    </script>
+</body>
+</html>

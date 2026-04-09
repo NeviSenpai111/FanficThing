@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ work.title }} - Fanficthing</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="reader-body">
+    <div class="reading-progress" id="progress"></div>
+
+    <nav class="reader-nav">
+        <a href="/" class="back-link">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            Library
+        </a>
+        <div class="reader-controls">
+            <button onclick="adjustFont(-1)" title="Smaller text">A&minus;</button>
+            <button onclick="adjustFont(1)" title="Larger text">A+</button>
+            <button onclick="toggleSerif()" title="Toggle font" id="font-btn">Serif</button>
+            <button onclick="toggleTheme()" title="Toggle dark/light" id="theme-btn">Light</button>
+        </div>
+    </nav>
+
+    <div class="sidebar-overlay" id="overlay" onclick="toggleSidebar()"></div>
+
+    <div class="reader-sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <h2>{{ work.title }}</h2>
+            <p class="work-author">by {{ work.author }}</p>
+        </div>
+        <div class="chapter-list">
+            {% for ch in chapters %}
+            <a href="#chapter-{{ ch.chapter_index }}"
+               class="chapter-link"
+               onclick="goToChapter({{ ch.chapter_index }})">
+                {{ ch.chapter_index + 1 }}. {{ ch.title or 'Chapter ' ~ (ch.chapter_index + 1) }}
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+
+    <button class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()" title="Chapters">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+
+    <main class="reader-content" id="reader-content">
+        <div class="work-header">
+            <h1>{{ work.title }}</h1>
+            <p class="work-author">by {{ work.author }}</p>
+            <p class="work-fandom">{{ work.fandom }}</p>
+            {% if work.summary %}
+            <details class="work-summary-details">
+                <summary>Summary</summary>
+                <div class="summary-text">{{ work.summary | safe }}</div>
+            </details>
+            {% endif %}
+            {% if work.tags %}
+            <div class="work-tags-reader">
+                {% for tag in work.tags %}
+                <span class="tag">{{ tag }}</span>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+
+        {% for ch in chapters %}
+        <article class="chapter" id="chapter-{{ ch.chapter_index }}">
+            <h2 class="chapter-heading">
+                {% if chapters | length > 1 %}
+                Chapter {{ ch.chapter_index + 1 }}{% if ch.title %}: {{ ch.title }}{% endif %}
+                {% endif %}
+            </h2>
+            <div class="chapter-text">
+                {{ ch.content | safe }}
+            </div>
+        </article>
+        {% endfor %}
+
+        <div class="reader-footer">
+            <a href="/">Back to Library</a>
+        </div>
+    </main>
+
+    <script>
+        const content = document.getElementById('reader-content');
+
+        // Font size
+        let fontSize = parseInt(localStorage.getItem('fontSize') || '18');
+        content.style.fontSize = fontSize + 'px';
+
+        function adjustFont(delta) {
+            fontSize = Math.max(14, Math.min(28, fontSize + delta * 2));
+            content.style.fontSize = fontSize + 'px';
+            localStorage.setItem('fontSize', fontSize);
+        }
+
+        // Font family toggle
+        let useSerif = localStorage.getItem('useSerif') !== 'false';
+        applyFont();
+
+        function toggleSerif() {
+            useSerif = !useSerif;
+            localStorage.setItem('useSerif', useSerif);
+            applyFont();
+        }
+
+        function applyFont() {
+            content.style.fontFamily = useSerif
+                ? "'Lora', 'Georgia', serif"
+                : "'Inter', -apple-system, system-ui, sans-serif";
+            document.getElementById('font-btn').textContent = useSerif ? 'Sans' : 'Serif';
+            if (useSerif) {
+                document.getElementById('font-btn').classList.remove('active');
+            } else {
+                document.getElementById('font-btn').classList.add('active');
+            }
+        }
+
+        // Theme
+        let dark = localStorage.getItem('theme') !== 'light';
+        applyTheme();
+
+        function toggleTheme() {
+            dark = !dark;
+            localStorage.setItem('theme', dark ? 'dark' : 'light');
+            applyTheme();
+        }
+
+        function applyTheme() {
+            document.body.classList.toggle('light-theme', !dark);
+            const btn = document.getElementById('theme-btn');
+            btn.textContent = dark ? 'Light' : 'Dark';
+            if (!dark) btn.classList.add('active');
+            else btn.classList.remove('active');
+        }
+
+        // Sidebar
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('open');
+            document.getElementById('overlay').classList.toggle('visible');
+        }
+
+        function goToChapter(idx) {
+            toggleSidebar();
+            document.getElementById('chapter-' + idx).scrollIntoView({behavior: 'smooth'});
+        }
+
+        // Reading progress bar
+        window.addEventListener('scroll', () => {
+            const winH = document.documentElement.scrollHeight - window.innerHeight;
+            const pct = winH > 0 ? (window.scrollY / winH) * 100 : 0;
+            document.getElementById('progress').style.width = pct + '%';
+        }, {passive: true});
+
+        // Auto-check for updates on load
+        (async function checkUpdates() {
+            try {
+                const resp = await fetch('/api/update/{{ work.id }}', {method: 'POST'});
+                const text = await resp.text();
+                let data;
+                try { data = JSON.parse(text); } catch { return; }
+                if (data.updated > 0) {
+                    const banner = document.createElement('div');
+                    banner.className = 'update-banner';
+                    banner.innerHTML = `${data.updated} new chapter(s) found! <a href="" onclick="location.reload(); return false;">Reload to read</a>`;
+                    document.body.prepend(banner);
+                }
+            } catch (e) {}
+        })();
+    </script>
+</body>
+</html>
