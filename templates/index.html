@@ -21,19 +21,67 @@
         </div>
         <div id="status" class="status"></div>
 
-        <div class="library">
+        {% if works %}
+        <div class="toolbar">
+            <div class="search-box">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="text" id="search-input" placeholder="Search library..." autocomplete="off" spellcheck="false" oninput="filterLibrary()">
+                <button class="search-clear" id="search-clear" onclick="clearSearch()" style="display:none">&times;</button>
+            </div>
+            <div class="toolbar-divider"></div>
+            <div class="sort-controls">
+                <select id="sort-select" onchange="sortLibrary()">
+                    <option value="added-desc">Recently added</option>
+                    <option value="added-asc">Oldest first</option>
+                    <option value="title-asc">Title A-Z</option>
+                    <option value="title-desc">Title Z-A</option>
+                    <option value="author-asc">Author A-Z</option>
+                    <option value="updated-desc">Recently updated</option>
+                    <option value="words-desc">Most words</option>
+                    <option value="words-asc">Fewest words</option>
+                </select>
+            </div>
+            <div class="toolbar-divider"></div>
+            <div class="library-stats">
+                {{ works|length }} fic{{ 's' if works|length != 1 else '' }}
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="library" id="library">
             {% for work in works %}
-            <div class="work-card" data-id="{{ work.id }}">
+            <div class="work-card" data-id="{{ work.id }}"
+                 data-title="{{ work.title|lower }}"
+                 data-author="{{ work.author|lower }}"
+                 data-fandom="{{ work.fandom|lower }}"
+                 data-tags="{{ work.tags|join(',')|lower }}"
+                 data-added="{{ work.added_at }}"
+                 data-updated="{{ work.last_updated }}"
+                 data-words="{{ work.word_count or 0 }}">
                 <div class="work-card-body" onclick="window.location='/read/{{ work.id }}'">
-                    <div class="work-rating">{{ work.rating }}</div>
+                    <div class="work-card-top">
+                        <div class="work-rating">{{ work.rating }}</div>
+                        {% if work.read_chapter is not none %}
+                        <div class="reading-badge" title="Reading progress">
+                            {% set total = work.total_chapters.split('/')[0] if '/' in work.total_chapters else '?' %}
+                            Ch. {{ work.read_chapter + 1 }}/{{ total }}
+                        </div>
+                        {% endif %}
+                    </div>
                     <h2 class="work-title">{{ work.title }}</h2>
                     <p class="work-author">by {{ work.author }}</p>
                     <p class="work-fandom">{{ work.fandom }}</p>
                     <div class="work-meta">
                         <span>
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
-                            {{ work.total_chapters }} chapters
+                            {{ work.total_chapters }} ch
                         </span>
+                        {% if work.word_count %}
+                        <span>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+                            {{ "{:,}".format(work.word_count) }} words
+                        </span>
+                        {% endif %}
                         <span>
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                             {{ work.last_updated }}
@@ -42,6 +90,7 @@
                 </div>
                 <div class="work-card-actions">
                     <button class="btn-sm btn-update" onclick="event.stopPropagation(); updateWork({{ work.id }}, this)">Check for updates</button>
+                    <a class="btn-sm btn-ao3" href="{{ work.url }}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Open on AO3</a>
                     <button class="btn-sm btn-delete" onclick="event.stopPropagation(); deleteWork({{ work.id }})">Remove</button>
                 </div>
             </div>
@@ -54,6 +103,10 @@
             </div>
             {% endif %}
         </div>
+
+        <div class="empty-search" id="empty-search" style="display:none">
+            <p>No fics match your search.</p>
+        </div>
     </div>
 
     <script>
@@ -65,6 +118,57 @@
 
         function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+        // === Search ===
+        function filterLibrary() {
+            const q = document.getElementById('search-input').value.toLowerCase().trim();
+            const cards = document.querySelectorAll('.work-card');
+            const clearBtn = document.getElementById('search-clear');
+            clearBtn.style.display = q ? 'flex' : 'none';
+            let visible = 0;
+
+            cards.forEach(card => {
+                const match = !q ||
+                    card.dataset.title.includes(q) ||
+                    card.dataset.author.includes(q) ||
+                    card.dataset.fandom.includes(q) ||
+                    card.dataset.tags.includes(q);
+                card.style.display = match ? '' : 'none';
+                if (match) visible++;
+            });
+
+            document.getElementById('empty-search').style.display = (q && visible === 0) ? '' : 'none';
+        }
+
+        function clearSearch() {
+            document.getElementById('search-input').value = '';
+            filterLibrary();
+            document.getElementById('search-input').focus();
+        }
+
+        // === Sort ===
+        function sortLibrary() {
+            const val = document.getElementById('sort-select').value;
+            const lib = document.getElementById('library');
+            const cards = [...lib.querySelectorAll('.work-card')];
+
+            cards.sort((a, b) => {
+                switch (val) {
+                    case 'title-asc': return a.dataset.title.localeCompare(b.dataset.title);
+                    case 'title-desc': return b.dataset.title.localeCompare(a.dataset.title);
+                    case 'author-asc': return a.dataset.author.localeCompare(b.dataset.author);
+                    case 'added-desc': return b.dataset.added.localeCompare(a.dataset.added);
+                    case 'added-asc': return a.dataset.added.localeCompare(b.dataset.added);
+                    case 'updated-desc': return b.dataset.updated.localeCompare(a.dataset.updated);
+                    case 'words-desc': return (parseInt(b.dataset.words)||0) - (parseInt(a.dataset.words)||0);
+                    case 'words-asc': return (parseInt(a.dataset.words)||0) - (parseInt(b.dataset.words)||0);
+                    default: return 0;
+                }
+            });
+
+            cards.forEach(c => lib.appendChild(c));
+        }
+
+        // === Download ===
         async function pollJob(jobId) {
             let dots = 0;
             while (true) {
@@ -74,12 +178,9 @@
                 let data;
                 try { data = JSON.parse(text); } catch { throw new Error('Lost connection to server'); }
 
-                if (data.status === 'done') {
-                    return data;
-                } else if (data.status === 'error') {
-                    throw new Error(data.error || 'Download failed');
-                }
-                // Still working — update the status with a little animation
+                if (data.status === 'done') return data;
+                if (data.status === 'error') throw new Error(data.error || 'Download failed');
+
                 dots = (dots + 1) % 4;
                 setStatus('Downloading from AO3' + '.'.repeat(dots + 1) + ' (this can take a few minutes for long fics)', 'info');
             }
@@ -105,11 +206,8 @@
                 const text = await resp.text();
                 let data;
                 try { data = JSON.parse(text); } catch { throw new Error(text || 'Server returned an invalid response'); }
-                if (!resp.ok) {
-                    throw new Error(data.detail || 'Failed to download');
-                }
+                if (!resp.ok) throw new Error(data.detail || 'Failed to download');
 
-                // If already in library, it returns immediately with status: done
                 if (data.status === 'done') {
                     setStatus(`"${data.title}" is already in your library.`, 'info');
                     input.value = '';
@@ -117,7 +215,6 @@
                     return;
                 }
 
-                // Otherwise we got a job_id — poll for completion
                 if (data.job_id) {
                     setStatus('Downloading from AO3... (this can take a few minutes for long fics)', 'info');
                     const result = await pollJob(data.job_id);
@@ -167,8 +264,18 @@
             setTimeout(() => card.remove(), 300);
         }
 
+        // === Keyboard shortcuts ===
         document.getElementById('url-input').addEventListener('keydown', e => {
             if (e.key === 'Enter') addWork();
+        });
+
+        document.addEventListener('keydown', e => {
+            // Ctrl/Cmd+K to focus search
+            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+                e.preventDefault();
+                const si = document.getElementById('search-input');
+                if (si) { si.focus(); si.select(); }
+            }
         });
     </script>
 </body>

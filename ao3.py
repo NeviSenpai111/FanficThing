@@ -126,28 +126,40 @@ async def _request_fichub_generation(url: str, client: httpx.AsyncClient) -> dic
 
 
 async def fetch_work(url: str, client: httpx.AsyncClient) -> dict:
-    """Fetch metadata and full HTML content for an AO3 work via FicHub."""
+    """Fetch work via FicHub, falling back to direct AO3 scraping if needed."""
 
     # Step 1: Get metadata (with retries — FicHub can be slow for uncached fics)
     meta = None
-    for attempt in range(5):
+    fichub_failed = False
+    for attempt in range(3):
         try:
-            log.info(f"Fetching metadata attempt {attempt+1}/5 for {url}")
+            log.info(f"Fetching metadata attempt {attempt+1}/3 for {url}")
             meta_resp = await client.get(f"{FICHUB_BASE}/meta", params={"q": url}, timeout=90)
             meta_resp.raise_for_status()
             meta = meta_resp.json()
+            # Check if FicHub actually found the fic
+            if meta.get("err") == -1 or not meta.get("title"):
+                log.warning("FicHub can't find this fic, falling back to direct scraping")
+                fichub_failed = True
             break
         except (httpx.TimeoutException, httpx.ReadTimeout) as e:
             log.warning(f"Metadata attempt {attempt+1} timed out: {e}")
-            if attempt < 4:
+            if attempt < 2:
                 await asyncio.sleep(5)
                 continue
-            raise RuntimeError("FicHub is not responding. Try again in a minute.")
+            fichub_failed = True
+            break
         except httpx.HTTPStatusError as e:
-            if e.response.status_code in (502, 503, 504) and attempt < 4:
+            if e.response.status_code in (502, 503, 504) and attempt < 2:
                 await asyncio.sleep(5)
                 continue
-            raise
+            fichub_failed = True
+            break
+
+    if fichub_failed or meta is None:
+        log.info("Using direct AO3 scraper (Playwright)")
+        from ao3_direct import fetch_work_direct
+        return await fetch_work_direct(url)
 
     work_id = parse_work_id(url) or ""
     tags = []
@@ -162,9 +174,16 @@ async def fetch_work(url: str, client: httpx.AsyncClient) -> dict:
     total_chapters = stats.get("chapters", "1/1")
     last_updated = stats.get("published", meta.get("updated", ""))
     fandom_list = ext.get("fandom", [])
+    word_str = stats.get("words", "0").replace(",", "")
+    word_count = int(word_str) if word_str.isdigit() else meta.get("words", 0)
 
-    # Step 2: Request generation with retries
-    epub_data = await _request_fichub_generation(url, client)
+    # Step 2: Request generation with retries — fall back to direct if it fails
+    try:
+        epub_data = await _request_fichub_generation(url, client)
+    except RuntimeError:
+        log.info("FicHub generation failed, falling back to direct AO3 scraper")
+        from ao3_direct import fetch_work_direct
+        return await fetch_work_direct(url)
 
     # Step 3: Download the HTML zip
     html_path = epub_data["html_url"]
@@ -193,6 +212,7 @@ async def fetch_work(url: str, client: httpx.AsyncClient) -> dict:
         "fandom": ", ".join(fandom_list),
         "tags": tags,
         "rating": rating,
+        "word_count": word_count,
         "total_chapters": total_chapters,
         "last_updated": last_updated,
         "chapters": chapters,

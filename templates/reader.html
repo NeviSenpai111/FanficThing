@@ -15,6 +15,9 @@
             Library
         </a>
         <div class="reader-controls">
+            <button onclick="toggleSearch()" title="Search in text (Ctrl+F)" id="search-toggle-btn">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            </button>
             <button onclick="adjustFont(-1)" title="Smaller text">A&minus;</button>
             <button onclick="adjustFont(1)" title="Larger text">A+</button>
             <button onclick="toggleSerif()" title="Toggle font" id="font-btn">Serif</button>
@@ -22,17 +25,31 @@
         </div>
     </nav>
 
+    <!-- Text search bar -->
+    <div class="text-search-bar" id="text-search-bar">
+        <input type="text" id="text-search-input" placeholder="Search in text..." autocomplete="off" spellcheck="false">
+        <span class="text-search-count" id="text-search-count"></span>
+        <button onclick="textSearchNav(-1)" title="Previous">&uarr;</button>
+        <button onclick="textSearchNav(1)" title="Next">&darr;</button>
+        <button onclick="toggleSearch()" title="Close">&times;</button>
+    </div>
+
     <div class="sidebar-overlay" id="overlay" onclick="toggleSidebar()"></div>
 
     <div class="reader-sidebar" id="sidebar">
         <div class="sidebar-header">
             <h2>{{ work.title }}</h2>
             <p class="work-author">by {{ work.author }}</p>
+            {% if work.word_count %}
+            <p class="sidebar-meta">{{ "{:,}".format(work.word_count) }} words</p>
+            {% endif %}
+            <a class="sidebar-ao3-link" href="{{ work.url }}" target="_blank" rel="noopener">Open on AO3</a>
         </div>
-        <div class="chapter-list">
+        <div class="chapter-list" id="chapter-list">
             {% for ch in chapters %}
             <a href="#chapter-{{ ch.chapter_index }}"
                class="chapter-link"
+               data-index="{{ ch.chapter_index }}"
                onclick="goToChapter({{ ch.chapter_index }})">
                 {{ ch.chapter_index + 1 }}. {{ ch.title or 'Chapter ' ~ (ch.chapter_index + 1) }}
             </a>
@@ -49,6 +66,9 @@
             <h1>{{ work.title }}</h1>
             <p class="work-author">by {{ work.author }}</p>
             <p class="work-fandom">{{ work.fandom }}</p>
+            {% if work.word_count %}
+            <p class="work-wordcount">{{ "{:,}".format(work.word_count) }} words</p>
+            {% endif %}
             {% if work.summary %}
             <details class="work-summary-details">
                 <summary>Summary</summary>
@@ -65,7 +85,7 @@
         </div>
 
         {% for ch in chapters %}
-        <article class="chapter" id="chapter-{{ ch.chapter_index }}">
+        <article class="chapter" id="chapter-{{ ch.chapter_index }}" data-index="{{ ch.chapter_index }}">
             <h2 class="chapter-heading">
                 {% if chapters | length > 1 %}
                 Chapter {{ ch.chapter_index + 1 }}{% if ch.title %}: {{ ch.title }}{% endif %}
@@ -84,8 +104,12 @@
 
     <script>
         const content = document.getElementById('reader-content');
+        const WORK_ID = {{ work.id }};
+        const TOTAL_CHAPTERS = {{ chapters|length }};
 
-        // Font size
+        // ============================================================
+        //  Font size
+        // ============================================================
         let fontSize = parseInt(localStorage.getItem('fontSize') || '18');
         content.style.fontSize = fontSize + 'px';
 
@@ -95,7 +119,9 @@
             localStorage.setItem('fontSize', fontSize);
         }
 
-        // Font family toggle
+        // ============================================================
+        //  Font family
+        // ============================================================
         let useSerif = localStorage.getItem('useSerif') !== 'false';
         applyFont();
 
@@ -110,14 +136,12 @@
                 ? "'Lora', 'Georgia', serif"
                 : "'Inter', -apple-system, system-ui, sans-serif";
             document.getElementById('font-btn').textContent = useSerif ? 'Sans' : 'Serif';
-            if (useSerif) {
-                document.getElementById('font-btn').classList.remove('active');
-            } else {
-                document.getElementById('font-btn').classList.add('active');
-            }
+            document.getElementById('font-btn').classList.toggle('active', !useSerif);
         }
 
-        // Theme
+        // ============================================================
+        //  Theme
+        // ============================================================
         let dark = localStorage.getItem('theme') !== 'light';
         applyTheme();
 
@@ -131,32 +155,226 @@
             document.body.classList.toggle('light-theme', !dark);
             const btn = document.getElementById('theme-btn');
             btn.textContent = dark ? 'Light' : 'Dark';
-            if (!dark) btn.classList.add('active');
-            else btn.classList.remove('active');
+            btn.classList.toggle('active', !dark);
         }
 
-        // Sidebar
+        // ============================================================
+        //  Sidebar
+        // ============================================================
         function toggleSidebar() {
             document.getElementById('sidebar').classList.toggle('open');
             document.getElementById('overlay').classList.toggle('visible');
         }
 
         function goToChapter(idx) {
-            toggleSidebar();
+            document.getElementById('sidebar').classList.remove('open');
+            document.getElementById('overlay').classList.remove('visible');
             document.getElementById('chapter-' + idx).scrollIntoView({behavior: 'smooth'});
         }
 
-        // Reading progress bar
-        window.addEventListener('scroll', () => {
+        // ============================================================
+        //  Reading progress bar + current chapter tracking
+        // ============================================================
+        let currentChapter = 0;
+
+        function getCurrentChapter() {
+            const articles = document.querySelectorAll('.chapter');
+            let current = 0;
+            articles.forEach(a => {
+                if (a.getBoundingClientRect().top < window.innerHeight / 2) {
+                    current = parseInt(a.dataset.index);
+                }
+            });
+            return current;
+        }
+
+        function updateProgress() {
             const winH = document.documentElement.scrollHeight - window.innerHeight;
             const pct = winH > 0 ? (window.scrollY / winH) * 100 : 0;
             document.getElementById('progress').style.width = pct + '%';
-        }, {passive: true});
 
-        // Auto-check for updates on load
+            currentChapter = getCurrentChapter();
+
+            // Highlight current chapter in sidebar
+            document.querySelectorAll('.chapter-link').forEach(l => {
+                l.classList.toggle('current', parseInt(l.dataset.index) === currentChapter);
+            });
+        }
+
+        window.addEventListener('scroll', updateProgress, {passive: true});
+
+        // ============================================================
+        //  Save/restore reading position
+        // ============================================================
+        let saveTimeout;
+        function savePosition() {
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(() => {
+                const winH = document.documentElement.scrollHeight - window.innerHeight;
+                const pct = winH > 0 ? (window.scrollY / winH) * 100 : 0;
+                fetch(`/api/progress/${WORK_ID}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({chapter: currentChapter, scroll: pct}),
+                }).catch(() => {});
+            }, 1000);
+        }
+
+        window.addEventListener('scroll', savePosition, {passive: true});
+
+        // Restore position on load
+        {% if progress %}
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedScroll = {{ progress.scroll_pct }};
+            if (savedScroll > 1) {
+                const winH = document.documentElement.scrollHeight - window.innerHeight;
+                window.scrollTo(0, (savedScroll / 100) * winH);
+            }
+        });
+        {% endif %}
+
+        // ============================================================
+        //  Text search
+        // ============================================================
+        let searchOpen = false;
+        let searchMatches = [];
+        let searchIdx = -1;
+
+        function toggleSearch() {
+            searchOpen = !searchOpen;
+            const bar = document.getElementById('text-search-bar');
+            bar.classList.toggle('visible', searchOpen);
+            document.getElementById('search-toggle-btn').classList.toggle('active', searchOpen);
+            if (searchOpen) {
+                document.getElementById('text-search-input').focus();
+            } else {
+                clearHighlights();
+                document.getElementById('text-search-input').value = '';
+                document.getElementById('text-search-count').textContent = '';
+            }
+        }
+
+        function clearHighlights() {
+            document.querySelectorAll('mark.search-hl').forEach(m => {
+                const parent = m.parentNode;
+                parent.replaceChild(document.createTextNode(m.textContent), m);
+                parent.normalize();
+            });
+            searchMatches = [];
+            searchIdx = -1;
+        }
+
+        function doTextSearch(query) {
+            clearHighlights();
+            if (!query.trim()) {
+                document.getElementById('text-search-count').textContent = '';
+                return;
+            }
+
+            const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+            const textNodes = [];
+            while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+            const lowerQ = query.toLowerCase();
+            textNodes.forEach(node => {
+                const text = node.textContent;
+                const lower = text.toLowerCase();
+                let idx = lower.indexOf(lowerQ);
+                if (idx === -1) return;
+
+                const frag = document.createDocumentFragment();
+                let lastIdx = 0;
+                while (idx !== -1) {
+                    frag.appendChild(document.createTextNode(text.slice(lastIdx, idx)));
+                    const mark = document.createElement('mark');
+                    mark.className = 'search-hl';
+                    mark.textContent = text.slice(idx, idx + query.length);
+                    frag.appendChild(mark);
+                    lastIdx = idx + query.length;
+                    idx = lower.indexOf(lowerQ, lastIdx);
+                }
+                frag.appendChild(document.createTextNode(text.slice(lastIdx)));
+                node.parentNode.replaceChild(frag, node);
+            });
+
+            searchMatches = [...document.querySelectorAll('mark.search-hl')];
+            document.getElementById('text-search-count').textContent =
+                searchMatches.length ? `${searchMatches.length} found` : 'No results';
+
+            if (searchMatches.length) {
+                searchIdx = 0;
+                highlightCurrent();
+            }
+        }
+
+        function highlightCurrent() {
+            searchMatches.forEach(m => m.classList.remove('search-hl-active'));
+            if (searchMatches[searchIdx]) {
+                searchMatches[searchIdx].classList.add('search-hl-active');
+                searchMatches[searchIdx].scrollIntoView({behavior: 'smooth', block: 'center'});
+                document.getElementById('text-search-count').textContent =
+                    `${searchIdx + 1} / ${searchMatches.length}`;
+            }
+        }
+
+        function textSearchNav(dir) {
+            if (!searchMatches.length) return;
+            searchIdx = (searchIdx + dir + searchMatches.length) % searchMatches.length;
+            highlightCurrent();
+        }
+
+        document.getElementById('text-search-input').addEventListener('input', e => {
+            doTextSearch(e.target.value);
+        });
+
+        document.getElementById('text-search-input').addEventListener('keydown', e => {
+            if (e.key === 'Enter') {
+                textSearchNav(e.shiftKey ? -1 : 1);
+                e.preventDefault();
+            }
+            if (e.key === 'Escape') toggleSearch();
+        });
+
+        // ============================================================
+        //  Keyboard shortcuts
+        // ============================================================
+        document.addEventListener('keydown', e => {
+            // Don't capture when typing in an input
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+            // Ctrl+F / Cmd+F — open text search
+            if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+                e.preventDefault();
+                if (!searchOpen) toggleSearch();
+                else document.getElementById('text-search-input').focus();
+            }
+
+            // Left/Right — prev/next chapter
+            if (e.key === 'ArrowLeft' && currentChapter > 0) {
+                goToChapter(currentChapter - 1);
+            }
+            if (e.key === 'ArrowRight' && currentChapter < TOTAL_CHAPTERS - 1) {
+                goToChapter(currentChapter + 1);
+            }
+
+            // T — toggle sidebar (table of contents)
+            if (e.key === 't' || e.key === 'T') {
+                toggleSidebar();
+            }
+
+            // Escape — close sidebar or search
+            if (e.key === 'Escape') {
+                if (searchOpen) toggleSearch();
+                else if (document.getElementById('sidebar').classList.contains('open')) toggleSidebar();
+            }
+        });
+
+        // ============================================================
+        //  Auto-check for updates on load
+        // ============================================================
         (async function checkUpdates() {
             try {
-                const resp = await fetch('/api/update/{{ work.id }}', {method: 'POST'});
+                const resp = await fetch(`/api/update/${WORK_ID}`, {method: 'POST'});
                 const text = await resp.text();
                 let data;
                 try { data = JSON.parse(text); } catch { return; }
@@ -168,6 +386,9 @@
                 }
             } catch (e) {}
         })();
+
+        // Initial progress update
+        updateProgress();
     </script>
 </body>
 </html>

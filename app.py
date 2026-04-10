@@ -48,6 +48,7 @@ async def _do_download(job_id: str, url: str):
                 author=data["author"], summary=data["summary"], fandom=data["fandom"],
                 tags=data["tags"], rating=data["rating"],
                 total_chapters=data["total_chapters"], last_updated=data["last_updated"],
+                word_count=data.get("word_count", 0),
             )
 
             for ch in data["chapters"]:
@@ -90,7 +91,6 @@ async def add_work(request: Request):
     job_id = f"job_{_job_counter}"
     download_jobs[job_id] = {"status": "queued", "url": url}
 
-    # Fire and forget — runs in background
     asyncio.create_task(_do_download(job_id, url))
 
     return JSONResponse({"job_id": job_id, "status": "queued"})
@@ -108,7 +108,6 @@ async def job_status(job_id: str):
         resp["title"] = job.get("title", "")
         resp["chapters"] = job.get("chapters", 0)
         resp["work_id"] = job.get("work_id")
-        # Clean up old job
         del download_jobs[job_id]
     elif job["status"] == "error":
         resp["error"] = job.get("error", "Unknown error")
@@ -134,6 +133,7 @@ async def update_work(work_id: int):
                 author=data["author"], summary=data["summary"], fandom=data["fandom"],
                 tags=data["tags"], rating=data["rating"],
                 total_chapters=data["total_chapters"], last_updated=data["last_updated"],
+                word_count=data.get("word_count", 0),
             )
 
             new_count = len(data["chapters"])
@@ -158,9 +158,32 @@ async def read_work(request: Request, work_id: int):
     if not work:
         raise HTTPException(404, "Work not found")
     chapters = db.get_chapters(work_id)
+    progress = db.get_progress(work_id)
     return templates.TemplateResponse(request, "reader.html", {
-        "work": work, "chapters": chapters,
+        "work": work, "chapters": chapters, "progress": progress,
     })
+
+
+@app.post("/api/progress/{work_id}")
+async def save_progress(work_id: int, request: Request):
+    body = await request.json()
+    db.save_progress(work_id, body.get("chapter", 0), body.get("scroll", 0))
+    return {"ok": True}
+
+
+@app.get("/api/progress/{work_id}")
+async def get_progress(work_id: int):
+    p = db.get_progress(work_id)
+    if p:
+        return p
+    return {"chapter_index": 0, "scroll_pct": 0}
+
+
+@app.get("/api/search")
+async def search_works(q: str = ""):
+    if not q.strip():
+        return db.get_all_works()
+    return db.search_works(q.strip())
 
 
 @app.get("/api/works")
