@@ -7,6 +7,6 @@ data/fanfics.db-shm
 __pycache__/
 *.pyc
 .venv/
-
+.claude
 # Playwright browsers
 .cache/
