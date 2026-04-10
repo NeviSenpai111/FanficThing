@@ -1,0 +1,12 @@
+# Database
+data/fanfics.db
+data/fanfics.db-wal
+data/fanfics.db-shm
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Playwright browsers
+.cache/
