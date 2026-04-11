@@ -19,7 +19,7 @@ A self-hosted web app for saving and reading fanfiction from [Archive of Our Own
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/your-username/FanficThing.git
+   git clone https://github.com/NeviSenpai111/FanficThing.git
    cd FanficThing
    ```
 
