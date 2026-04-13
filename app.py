@@ -2,8 +2,6 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-import httpx
-
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("fanficthing")
 from fastapi import FastAPI, Request, HTTPException
@@ -40,19 +38,18 @@ async def _do_download(job_id: str, url: str):
     """Background task that downloads a fic."""
     try:
         download_jobs[job_id]["status"] = "downloading"
-        async with httpx.AsyncClient() as client:
-            data = await ao3.fetch_work(url, client)
+        data = await ao3.fetch_work(url)
 
-            db_id = db.upsert_work(
-                ao3_id=data["ao3_id"], url=data["url"], title=data["title"],
-                author=data["author"], summary=data["summary"], fandom=data["fandom"],
-                tags=data["tags"], rating=data["rating"],
-                total_chapters=data["total_chapters"], last_updated=data["last_updated"],
-                word_count=data.get("word_count", 0),
-            )
+        db_id = db.upsert_work(
+            ao3_id=data["ao3_id"], url=data["url"], title=data["title"],
+            author=data["author"], summary=data["summary"], fandom=data["fandom"],
+            tags=data["tags"], rating=data["rating"],
+            total_chapters=data["total_chapters"], last_updated=data["last_updated"],
+            word_count=data.get("word_count", 0),
+        )
 
-            for ch in data["chapters"]:
-                db.upsert_chapter(db_id, ch["index"], ch["title"], ch["content"])
+        for ch in data["chapters"]:
+            db.upsert_chapter(db_id, ch["index"], ch["title"], ch["content"])
 
         download_jobs[job_id].update({
             "status": "done",
@@ -125,23 +122,22 @@ async def update_work(work_id: int):
     stored_count = db.get_chapter_count(work_id)
 
     try:
-        async with httpx.AsyncClient() as client:
-            data = await ao3.fetch_work(work["url"], client)
+        data = await ao3.fetch_work(work["url"])
 
-            db.upsert_work(
-                ao3_id=data["ao3_id"], url=data["url"], title=data["title"],
-                author=data["author"], summary=data["summary"], fandom=data["fandom"],
-                tags=data["tags"], rating=data["rating"],
-                total_chapters=data["total_chapters"], last_updated=data["last_updated"],
-                word_count=data.get("word_count", 0),
-            )
+        db.upsert_work(
+            ao3_id=data["ao3_id"], url=data["url"], title=data["title"],
+            author=data["author"], summary=data["summary"], fandom=data["fandom"],
+            tags=data["tags"], rating=data["rating"],
+            total_chapters=data["total_chapters"], last_updated=data["last_updated"],
+            word_count=data.get("word_count", 0),
+        )
 
-            new_count = len(data["chapters"])
-            updated = 0
-            if new_count > stored_count:
-                for ch in data["chapters"][stored_count:]:
-                    db.upsert_chapter(work_id, ch["index"], ch["title"], ch["content"])
-                    updated += 1
+        new_count = len(data["chapters"])
+        updated = 0
+        if new_count > stored_count:
+            for ch in data["chapters"][stored_count:]:
+                db.upsert_chapter(work_id, ch["index"], ch["title"], ch["content"])
+                updated += 1
 
         return JSONResponse({
             "updated": updated,

@@ -9,7 +9,7 @@ A self-hosted web app for saving and reading fanfiction from [Archive of Our Own
 - **Reading progress** — automatically tracks your current chapter and scroll position
 - **Library search** — search your saved fics by title, author, fandom, or tags
 - **Update checking** — check for new chapters on fics you've already saved
-- **Dual scraping backends** — uses [FicHub](https://fichub.net) by default, with a direct Playwright-based AO3 scraper as fallback
+- **Playwright scraper** — downloads fics directly from AO3 using a headless browser
 
 ## Requirements
 
@@ -30,7 +30,7 @@ A self-hosted web app for saving and reading fanfiction from [Archive of Our Own
    This will:
    - Create a Python virtual environment (`.venv`)
    - Install all dependencies
-   - Install the Playwright Chromium browser (used for the fallback scraper)
+   - Install the Playwright Chromium browser (used for AO3 scraping)
    - Create the `data/` directory
 
    Works on Linux, macOS, and Windows.
@@ -70,8 +70,7 @@ Click any fic in your library to open the reader. Your reading position is saved
 
 - **[FastAPI](https://fastapi.tiangolo.com/)** — async web framework
 - **[SQLite](https://www.sqlite.org/)** — local database (stored in `data/fanfics.db`)
-- **[FicHub API](https://fichub.net)** — primary fic download source
-- **[Playwright](https://playwright.dev/python/)** — headless browser for direct AO3 scraping fallback
+- **[Playwright](https://playwright.dev/python/)** — headless browser for AO3 scraping
 - **[Jinja2](https://jinja.palletsprojects.com/)** — HTML templating
 - **[Beautiful Soup](https://www.crummy.com/software/BeautifulSoup/)** — HTML parsing
 

@@ -1,4 +1,4 @@
-"""Direct AO3 scraper using Playwright as a fallback when FicHub can't find a fic."""
+"""AO3 scraper using Playwright headless browser."""
 
 import asyncio
 import logging
