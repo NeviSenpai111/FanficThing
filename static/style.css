@@ -159,6 +159,30 @@ header h1 {
     box-shadow: none;
 }
 
+.btn-ao3-home {
+    padding: 0.85rem 1.2rem;
+    background: var(--card);
+    backdrop-filter: blur(12px);
+    color: var(--accent);
+    border: 1.5px solid var(--card-border);
+    border-radius: var(--radius);
+    font-size: 0.95rem;
+    font-weight: 600;
+    font-family: var(--font);
+    text-decoration: none;
+    transition: all var(--transition);
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+}
+
+.btn-ao3-home:hover {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+    transform: translateY(-1px);
+}
+
 /* Status bar */
 .status {
     text-align: center;
@@ -955,7 +979,7 @@ mark.search-hl-active {
 @media (max-width: 640px) {
     .app { padding: 2rem 1rem; }
     .add-form { flex-direction: column; }
-    .add-form button { width: 100%; }
+    .add-form button, .add-form .btn-ao3-home { width: 100%; justify-content: center; }
     header h1 { font-size: 2rem; }
     .toolbar { flex-wrap: wrap; padding: 0.5rem 0.65rem; }
     .search-box { min-width: 100%; order: -1; }

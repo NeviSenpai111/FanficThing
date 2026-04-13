@@ -15,6 +15,9 @@
             Library
         </a>
         <div class="reader-controls">
+            <button onclick="toggleBookmark()" title="Save/return to position (B)" id="bookmark-btn">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+            </button>
             <button onclick="toggleSearch()" title="Search in text (Ctrl+F)" id="search-toggle-btn">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             </button>
@@ -234,6 +237,27 @@
         {% endif %}
 
         // ============================================================
+        //  Bookmark (save/return to position)
+        // ============================================================
+        let bookmarkY = null;
+
+        function toggleBookmark() {
+            const btn = document.getElementById('bookmark-btn');
+            if (bookmarkY !== null) {
+                // Return to saved position
+                window.scrollTo({top: bookmarkY, behavior: 'smooth'});
+                bookmarkY = null;
+                btn.classList.remove('active');
+                btn.title = 'Save position (B)';
+            } else {
+                // Save current position
+                bookmarkY = window.scrollY;
+                btn.classList.add('active');
+                btn.title = 'Return to saved position (B)';
+            }
+        }
+
+        // ============================================================
         //  Text search
         // ============================================================
         let searchOpen = false;
@@ -360,6 +384,11 @@
             // T — toggle sidebar (table of contents)
             if (e.key === 't' || e.key === 'T') {
                 toggleSidebar();
+            }
+
+            // B — bookmark position
+            if (e.key === 'b' || e.key === 'B') {
+                toggleBookmark();
             }
 
             // Escape — close sidebar or search
