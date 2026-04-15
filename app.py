@@ -1,11 +1,13 @@
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("fanficthing")
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -191,3 +193,79 @@ async def list_works():
 async def remove_work(work_id: int):
     db.delete_work(work_id)
     return {"ok": True}
+
+
+WALLBASH_PATH = Path.home() / ".cache" / "hyde" / "wall.dcol"
+
+
+def _parse_wallbash() -> dict[str, str] | None:
+    """Parse HyDE wallbash colors from wall.dcol."""
+    if not WALLBASH_PATH.exists():
+        return None
+    colors = {}
+    for line in WALLBASH_PATH.read_text().splitlines():
+        line = line.strip()
+        if "=" not in line or line.startswith("#"):
+            continue
+        key, _, val = line.partition("=")
+        colors[key.strip()] = val.strip().strip('"')
+    return colors
+
+
+@app.get("/api/theme.css")
+async def wallbash_theme():
+    """Serve CSS variables derived from HyDE wallbash colors."""
+    colors = _parse_wallbash()
+    if not colors:
+        return Response("/* no wallbash colors found */", media_type="text/css")
+
+    # Dark theme colors from wallbash palette
+    bg = colors.get("dcol_pry1", "0f0f17")
+    bg2 = colors.get("dcol_1xa1", "161624")
+    bg3 = colors.get("dcol_1xa2", "1e1e32")
+    accent = colors.get("dcol_1xa6", "a78bfa")
+    accent2 = colors.get("dcol_1xa8", "c4b5fd")
+    text = colors.get("dcol_txt1", "e8e6f0")
+    text2 = colors.get("dcol_1xa5", "8b88a2")
+    text3 = colors.get("dcol_1xa3", "5c5a6e")
+    card_border = colors.get("dcol_1xa2", "1e1e32")
+
+    # Light theme from the lighter end of the palette
+    light_bg = colors.get("dcol_pry4", "faf9f7")
+    light_bg2 = colors.get("dcol_1xa9", "f0eeeb")
+    light_accent = colors.get("dcol_1xa4", "7c3aed")
+    light_text = colors.get("dcol_txt4", "1a1a2e")
+
+    css = f""":root {{
+    --bg: #{bg};
+    --bg2: #{bg2};
+    --bg3: #{bg3};
+    --card: rgba(255, 255, 255, 0.04);
+    --card-hover: rgba(255, 255, 255, 0.07);
+    --card-border: #{card_border}88;
+    --accent: #{accent};
+    --accent2: #{accent2};
+    --accent-glow: #{accent}26;
+    --accent-dim: #{accent}14;
+    --text: #{text};
+    --text2: #{text2};
+    --text3: #{text3};
+}}
+
+.light-theme {{
+    --bg: #{light_bg};
+    --bg2: #{light_bg2};
+    --bg3: #{light_bg2};
+    --card: rgba(255, 255, 255, 0.7);
+    --card-hover: rgba(255, 255, 255, 0.9);
+    --card-border: #{light_accent}22;
+    --accent: #{light_accent};
+    --accent2: #{light_accent};
+    --accent-glow: #{light_accent}22;
+    --accent-dim: #{light_accent}0d;
+    --text: #{light_text};
+    --text2: #{light_accent};
+    --text3: #{light_accent}88;
+}}
+"""
+    return Response(css, media_type="text/css")
