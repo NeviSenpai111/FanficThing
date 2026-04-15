@@ -420,5 +420,24 @@
         // Initial progress update
         updateProgress();
     </script>
+    <script>
+        // Live-reload wallbash theme
+        (function() {
+            let lastMtime = 0;
+            async function checkTheme() {
+                try {
+                    const resp = await fetch('/api/theme-mtime');
+                    const data = await resp.json();
+                    if (lastMtime && data.mtime !== lastMtime) {
+                        const link = document.querySelector('link[href*="theme.css"]');
+                        if (link) link.href = '/api/theme.css?t=' + Date.now();
+                    }
+                    lastMtime = data.mtime;
+                } catch {}
+            }
+            checkTheme();
+            setInterval(checkTheme, 3000);
+        })();
+    </script>
 </body>
 </html>

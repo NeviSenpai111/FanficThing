@@ -269,3 +269,11 @@ async def wallbash_theme():
 }}
 """
     return Response(css, media_type="text/css")
+
+
+@app.get("/api/theme-mtime")
+async def wallbash_mtime():
+    """Return modification time of wall.dcol for live-reload polling."""
+    if WALLBASH_PATH.exists():
+        return {"mtime": WALLBASH_PATH.stat().st_mtime}
+    return {"mtime": 0}
