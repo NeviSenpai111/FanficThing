@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fanficthing</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="/static/style.css">
     <link rel="stylesheet" href="/api/theme.css">
 </head>
@@ -44,6 +45,10 @@
                 </select>
             </div>
             <div class="toolbar-divider"></div>
+            <button class="btn-check-all" id="check-all-btn" onclick="checkAllUpdates()" title="Check every fic for updates">
+                Check all
+            </button>
+            <div class="toolbar-divider"></div>
             <div class="library-stats">
                 {{ works|length }} fic{{ 's' if works|length != 1 else '' }}
             </div>
@@ -62,7 +67,9 @@
                  data-words="{{ work.word_count or 0 }}">
                 <div class="work-card-body" onclick="window.location='/read/{{ work.id }}'">
                     <div class="work-card-top">
+                        {% if work.rating %}
                         <div class="work-rating">{{ work.rating }}</div>
+                        {% endif %}
                         {% if work.read_chapter is not none %}
                         <div class="reading-badge" title="Reading progress">
                             {% set total = work.total_chapters.split('/')[0] if '/' in work.total_chapters else '?' %}
@@ -250,6 +257,32 @@
                 }
             } catch (e) {
                 setStatus(e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = original;
+            }
+        }
+
+        async function checkAllUpdates() {
+            const btn = document.getElementById('check-all-btn');
+            const original = btn.textContent;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>Checking all...';
+            setStatus('Checking every fic for updates — this can take a while...', 'info');
+            try {
+                const resp = await fetch('/api/update-all', {method: 'POST'});
+                const data = await resp.json();
+                if (data.new_chapters > 0) {
+                    setStatus(`Found ${data.new_chapters} new chapter(s) across ${data.updated_works} fic(s)!`, 'success');
+                    setTimeout(() => location.reload(), 1200);
+                } else {
+                    const msg = data.failed > 0
+                        ? `All caught up. (${data.failed} fic(s) couldn't be checked.)`
+                        : 'All fics are up to date.';
+                    setStatus(msg, 'info');
+                }
+            } catch (e) {
+                setStatus('Check failed: ' + e.message, 'error');
             } finally {
                 btn.disabled = false;
                 btn.textContent = original;

@@ -23,7 +23,11 @@ _job_counter = 0
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
-    yield
+    await ao3.startup()
+    try:
+        yield
+    finally:
+        await ao3.shutdown()
 
 app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -85,6 +89,11 @@ async def add_work(request: Request):
             "work_id": existing["id"],
             "chapters": db.get_chapter_count(existing["id"]),
         })
+
+    # Guard against duplicate in-flight downloads for the same URL
+    for jid, job in download_jobs.items():
+        if job.get("url") == url and job.get("status") in ("queued", "downloading"):
+            return JSONResponse({"job_id": jid, "status": job["status"]})
 
     _job_counter += 1
     job_id = f"job_{_job_counter}"
@@ -148,6 +157,42 @@ async def update_work(work_id: int):
         })
     except Exception as e:
         return JSONResponse({"detail": f"Update check failed: {e}"}, status_code=500)
+
+
+@app.post("/api/update-all")
+async def update_all_works():
+    works = db.get_all_works()
+    total_new = 0
+    updated_works = 0
+    failed = 0
+
+    for w in works:
+        stored_count = db.get_chapter_count(w["id"])
+        try:
+            data = await ao3.fetch_work(w["url"])
+            db.upsert_work(
+                ao3_id=data["ao3_id"], url=data["url"], title=data["title"],
+                author=data["author"], summary=data["summary"], fandom=data["fandom"],
+                tags=data["tags"], rating=data["rating"],
+                total_chapters=data["total_chapters"], last_updated=data["last_updated"],
+                word_count=data.get("word_count", 0),
+            )
+            new_count = len(data["chapters"])
+            if new_count > stored_count:
+                for ch in data["chapters"][stored_count:]:
+                    db.upsert_chapter(w["id"], ch["index"], ch["title"], ch["content"])
+                total_new += new_count - stored_count
+                updated_works += 1
+        except Exception as e:
+            log.warning(f"Update-all: failed for {w['title']}: {e}")
+            failed += 1
+
+    return JSONResponse({
+        "checked": len(works),
+        "updated_works": updated_works,
+        "new_chapters": total_new,
+        "failed": failed,
+    })
 
 
 @app.get("/read/{work_id}", response_class=HTMLResponse)
@@ -269,6 +314,19 @@ async def wallbash_theme():
 }}
 """
     return Response(css, media_type="text/css")
+
+
+@app.get("/favicon.svg")
+async def favicon():
+    """SVG favicon — a stylized book icon tinted with the wallbash accent."""
+    colors = _parse_wallbash() or {}
+    accent = colors.get("dcol_1xa6", "a78bfa")
+    svg = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#{accent}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/>
+<line x1="8" y1="7" x2="16" y2="7"/>
+<line x1="8" y1="11" x2="14" y2="11"/>
+</svg>'''
+    return Response(svg, media_type="image/svg+xml")
 
 
 @app.get("/api/theme-mtime")

@@ -633,6 +633,152 @@ header h1 {
 
 .sidebar-ao3-link:hover { text-decoration: underline; }
 
+.chapter-jump {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.8rem;
+    font-size: 0.8rem;
+    color: var(--text2);
+    flex-wrap: wrap;
+}
+
+.chapter-jump label { flex: 1 0 100%; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }
+
+.chapter-jump input {
+    flex: 1;
+    min-width: 0;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-sm);
+    background: var(--card);
+    color: var(--text);
+    font-size: 0.85rem;
+    font-family: var(--font);
+}
+
+.chapter-jump input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.chapter-jump button {
+    padding: 0.4rem 0.8rem;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.chapter-jump button:hover { opacity: 0.9; }
+
+/* Keyboard shortcut help overlay */
+.help-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(4px);
+    z-index: 1000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+}
+
+.help-overlay.visible { display: flex; animation: fadein 0.15s ease; }
+
+@keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
+
+.help-panel {
+    background: var(--bg2);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius);
+    padding: 1.75rem 2rem;
+    max-width: 420px;
+    width: 100%;
+    box-shadow: var(--shadow-lg);
+}
+
+.help-panel h3 {
+    margin-bottom: 1.1rem;
+    font-size: 1.15rem;
+    color: var(--text);
+}
+
+.help-panel ul { list-style: none; padding: 0; margin: 0 0 1.25rem; }
+
+.help-panel li {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    padding: 0.5rem 0;
+    font-size: 0.9rem;
+    color: var(--text2);
+    border-bottom: 1px solid var(--card-border);
+}
+
+.help-panel li:last-child { border-bottom: none; }
+.help-panel li span { flex: 1; }
+
+.help-panel kbd {
+    display: inline-block;
+    min-width: 1.8rem;
+    padding: 0.2rem 0.5rem;
+    font-family: ui-monospace, 'SF Mono', monospace;
+    font-size: 0.8rem;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 4px;
+    color: var(--text);
+    text-align: center;
+}
+
+.help-close {
+    display: block;
+    margin-left: auto;
+    padding: 0.45rem 1rem;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: opacity var(--transition);
+}
+
+.help-close:hover { opacity: 0.9; }
+
+/* Check-all button on toolbar */
+.btn-check-all {
+    padding: 0.55rem 0.95rem;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-sm);
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 0.85rem;
+    font-family: var(--font);
+    cursor: pointer;
+    transition: all var(--transition);
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.btn-check-all:hover:not(:disabled) {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+}
+
+.btn-check-all:disabled { opacity: 0.6; cursor: wait; }
+
 .chapter-list {
     display: flex;
     flex-direction: column;
