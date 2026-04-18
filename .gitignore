@@ -3,6 +3,9 @@ data/fanfics.db
 data/fanfics.db-wal
 data/fanfics.db-shm
 
+# LAN share token (per-instance secret)
+data/share_token.txt
+
 # Python
 __pycache__/
 *.pyc

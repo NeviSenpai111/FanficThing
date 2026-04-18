@@ -1,6 +1,11 @@
 import asyncio
+import json as _json
 import logging
 import os
+import re
+import secrets
+import urllib.error
+import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -230,7 +235,8 @@ async def search_works(q: str = ""):
 
 
 @app.get("/api/works")
-async def list_works():
+async def list_works(request: Request):
+    _require_share_token(request)
     return db.get_all_works()
 
 
@@ -238,6 +244,146 @@ async def list_works():
 async def remove_work(work_id: int):
     db.delete_work(work_id)
     return {"ok": True}
+
+
+# === LAN peer sharing ===
+_PEER_RE = re.compile(r"^[A-Za-z0-9._-]+(?::\d{1,5})?$")
+_TOKEN_PATH = Path(__file__).parent / "data" / "share_token.txt"
+
+
+def _load_or_create_token() -> str:
+    if _TOKEN_PATH.exists():
+        t = _TOKEN_PATH.read_text().strip()
+        if t:
+            return t
+    _TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+    t = secrets.token_urlsafe(12)
+    _TOKEN_PATH.write_text(t)
+    return t
+
+
+SHARE_TOKEN = _load_or_create_token()
+
+
+def _require_share_token(request: Request):
+    supplied = request.headers.get("x-share-token", "")
+    if not secrets.compare_digest(supplied, SHARE_TOKEN):
+        raise HTTPException(status_code=401, detail="Invalid or missing share token")
+
+
+def _normalize_peer(peer: str) -> str | None:
+    peer = (peer or "").strip()
+    if peer.startswith("http://"):
+        peer = peer[7:]
+    elif peer.startswith("https://"):
+        peer = peer[8:]
+    peer = peer.rstrip("/")
+    if not _PEER_RE.match(peer):
+        return None
+    return peer
+
+
+async def _peer_get(peer: str, path: str, token: str):
+    url = f"http://{peer}{path}"
+    def _fetch():
+        req = urllib.request.Request(url, headers={"X-Share-Token": token})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return _json.loads(r.read().decode("utf-8"))
+    return await asyncio.to_thread(_fetch)
+
+
+@app.get("/api/share-token")
+async def share_token():
+    """Local-UI helper: expose this instance's share token so the owner can copy it."""
+    return {"token": SHARE_TOKEN}
+
+
+@app.get("/api/export/{work_id}")
+async def export_work(work_id: int, request: Request):
+    _require_share_token(request)
+    work = db.get_work(work_id)
+    if not work:
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+    chapters = db.get_chapters(work_id)
+    return {
+        "work": {
+            "ao3_id": work["ao3_id"], "url": work["url"], "title": work["title"],
+            "author": work["author"], "summary": work["summary"],
+            "fandom": work["fandom"], "tags": work["tags"], "rating": work["rating"],
+            "word_count": work.get("word_count", 0),
+            "total_chapters": work["total_chapters"],
+            "last_updated": work["last_updated"],
+        },
+        "chapters": [
+            {"index": c["chapter_index"], "title": c["title"], "content": c["content"]}
+            for c in chapters
+        ],
+    }
+
+
+@app.post("/api/peer/list")
+async def peer_list(request: Request):
+    body = await request.json()
+    peer = _normalize_peer(body.get("peer", ""))
+    token = (body.get("token") or "").strip()
+    if not peer:
+        return JSONResponse({"detail": "Invalid peer address"}, status_code=400)
+    if not token:
+        return JSONResponse({"detail": "Peer token is required"}, status_code=400)
+    try:
+        works = await _peer_get(peer, "/api/works", token)
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return JSONResponse({"detail": "Peer rejected the token."}, status_code=401)
+        return JSONResponse({"detail": f"Peer error: {e}"}, status_code=502)
+    except Exception as e:
+        return JSONResponse({"detail": f"Couldn't reach peer: {e}"}, status_code=502)
+
+    have = {w["ao3_id"] for w in db.get_all_works()}
+    slim = [{
+        "id": w["id"], "title": w["title"], "author": w["author"],
+        "fandom": w.get("fandom", ""),
+        "total_chapters": w.get("total_chapters", ""),
+        "word_count": w.get("word_count", 0),
+        "ao3_id": w["ao3_id"],
+        "already_have": w["ao3_id"] in have,
+    } for w in works]
+    return {"works": slim, "peer": peer}
+
+
+@app.post("/api/peer/import")
+async def peer_import(request: Request):
+    body = await request.json()
+    peer = _normalize_peer(body.get("peer", ""))
+    token = (body.get("token") or "").strip()
+    work_id = body.get("work_id")
+    if not peer or not isinstance(work_id, int):
+        return JSONResponse({"detail": "Invalid request"}, status_code=400)
+    if not token:
+        return JSONResponse({"detail": "Peer token is required"}, status_code=400)
+    try:
+        payload = await _peer_get(peer, f"/api/export/{work_id}", token)
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return JSONResponse({"detail": "Peer rejected the token."}, status_code=401)
+        return JSONResponse({"detail": f"Peer error: {e}"}, status_code=502)
+    except Exception as e:
+        return JSONResponse({"detail": f"Fetch failed: {e}"}, status_code=502)
+
+    w = payload["work"]
+    db_id = db.upsert_work(
+        ao3_id=w["ao3_id"], url=w["url"], title=w["title"],
+        author=w["author"], summary=w["summary"], fandom=w["fandom"],
+        tags=w["tags"], rating=w["rating"],
+        total_chapters=w["total_chapters"], last_updated=w["last_updated"],
+        word_count=w.get("word_count", 0),
+    )
+    for ch in payload["chapters"]:
+        db.upsert_chapter(db_id, ch["index"], ch["title"], ch["content"])
+    return {
+        "ok": True, "title": w["title"],
+        "chapters": len(payload["chapters"]), "work_id": db_id,
+    }
 
 
 WALLBASH_PATH = Path.home() / ".cache" / "hyde" / "wall.dcol"

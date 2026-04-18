@@ -1156,3 +1156,123 @@ mark.search-hl-active {
 .work-card:nth-child(4) { animation-delay: 0.15s; }
 .work-card:nth-child(5) { animation-delay: 0.2s; }
 .work-card:nth-child(n+6) { animation-delay: 0.25s; }
+
+/* === LAN share modal === */
+.share-panel {
+    max-width: 560px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.share-hint {
+    font-size: 0.85rem;
+    color: var(--text2);
+    margin-bottom: 0.5rem;
+}
+
+.share-hint code {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    padding: 0.15rem 0.45rem;
+    border-radius: 4px;
+    font-family: ui-monospace, 'SF Mono', monospace;
+    font-size: 0.82rem;
+    color: var(--accent);
+    user-select: all;
+}
+
+.share-copy {
+    margin-left: 0.4rem;
+    padding: 0.1rem 0.5rem;
+    background: transparent;
+    border: 1px solid var(--card-border);
+    border-radius: 4px;
+    color: var(--text2);
+    font-size: 0.72rem;
+    font-family: var(--font);
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.share-copy:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.share-muted {
+    color: var(--text3);
+    font-size: 0.8rem;
+    margin-bottom: 1rem;
+}
+
+.share-row {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.share-row input {
+    flex: 1;
+    padding: 0.55rem 0.8rem;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font-family: ui-monospace, 'SF Mono', monospace;
+    font-size: 0.85rem;
+}
+
+.share-row input:focus {
+    outline: none;
+    border-color: var(--accent);
+    background: var(--accent-dim);
+}
+
+.share-status {
+    font-size: 0.82rem;
+    min-height: 1.2em;
+    margin-bottom: 0.6rem;
+    color: var(--text2);
+}
+
+.share-status.error { color: var(--error); }
+.share-status.success { color: var(--success); }
+
+.share-results {
+    overflow-y: auto;
+    flex: 1;
+    margin-bottom: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.peer-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem 0.8rem;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-sm);
+}
+
+.peer-meta { flex: 1; min-width: 0; }
+
+.peer-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.peer-sub {
+    font-size: 0.78rem;
+    color: var(--text2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}

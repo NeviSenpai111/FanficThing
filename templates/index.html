@@ -21,6 +21,7 @@
                 <span id="btn-text">Download</span>
             </button>
             <a class="btn-ao3-home" href="https://archiveofourown.org" target="_blank" rel="noopener" title="Browse AO3">AO3</a>
+            <button class="btn-ao3-home" onclick="openShare()" title="Import from a FanficThing on your network">Share</button>
         </div>
         <div id="status" class="status"></div>
 
@@ -115,6 +116,28 @@
 
         <div class="empty-search" id="empty-search" style="display:none">
             <p>No fics match your search.</p>
+        </div>
+    </div>
+
+    <div class="help-overlay" id="share-overlay" onclick="if(event.target===this)closeShare()">
+        <div class="help-panel share-panel">
+            <h3>Share with a FanficThing on your network</h3>
+            <p class="share-hint">Your address: <code id="share-self"></code></p>
+            <p class="share-hint">Your token:
+                <code id="share-token">...</code>
+                <button class="share-copy" onclick="copyToken()" title="Copy token">Copy</button>
+            </p>
+            <p class="share-hint share-muted">Send both to the other person. To pull fics, enter their address and token below.</p>
+            <div class="share-row">
+                <input type="text" id="peer-input" placeholder="peer address, e.g. 192.168.1.42:8000" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="share-row">
+                <input type="text" id="peer-token-input" placeholder="peer token" autocomplete="off" spellcheck="false">
+                <button class="btn-check-all" id="peer-load-btn" onclick="loadPeer()">Browse</button>
+            </div>
+            <div id="peer-status" class="share-status"></div>
+            <div id="peer-results" class="share-results"></div>
+            <button class="help-close" onclick="closeShare()">Close</button>
         </div>
     </div>
 
@@ -298,6 +321,136 @@
             await fetch(`/api/works/${id}`, {method: 'DELETE'});
             setTimeout(() => card.remove(), 300);
         }
+
+        // === LAN share ===
+        let _myToken = null;
+        async function openShare() {
+            document.getElementById('share-self').textContent = location.host;
+            document.getElementById('share-overlay').classList.add('visible');
+            if (!_myToken) {
+                try {
+                    const resp = await fetch('/api/share-token');
+                    const data = await resp.json();
+                    _myToken = data.token;
+                } catch { _myToken = '(unavailable)'; }
+            }
+            document.getElementById('share-token').textContent = _myToken;
+            setTimeout(() => document.getElementById('peer-input').focus(), 50);
+        }
+
+        async function copyToken() {
+            if (!_myToken) return;
+            try {
+                await navigator.clipboard.writeText(_myToken);
+                sharePeerStatus('Token copied.', 'success');
+                setTimeout(() => sharePeerStatus(''), 1500);
+            } catch {
+                sharePeerStatus('Copy failed — select and copy manually.', 'error');
+            }
+        }
+
+        function closeShare() {
+            document.getElementById('share-overlay').classList.remove('visible');
+        }
+
+        function sharePeerStatus(msg, type = 'info') {
+            const el = document.getElementById('peer-status');
+            el.textContent = msg || '';
+            el.className = 'share-status ' + (msg ? type : '');
+        }
+
+        async function loadPeer() {
+            const peer = document.getElementById('peer-input').value.trim();
+            const token = document.getElementById('peer-token-input').value.trim();
+            if (!peer) { sharePeerStatus('Enter the peer address.', 'error'); return; }
+            if (!token) { sharePeerStatus('Enter the peer token.', 'error'); return; }
+            const btn = document.getElementById('peer-load-btn');
+            btn.disabled = true;
+            const original = btn.textContent;
+            btn.innerHTML = '<span class="spinner"></span>Loading...';
+            sharePeerStatus('Contacting peer...', 'info');
+            document.getElementById('peer-results').innerHTML = '';
+            try {
+                const resp = await fetch('/api/peer/list', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({peer, token}),
+                });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.detail || 'Failed');
+                renderPeerList(data.peer, token, data.works);
+                sharePeerStatus(`${data.works.length} fic(s) on peer.`, 'info');
+            } catch (e) {
+                sharePeerStatus(e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = original;
+            }
+        }
+
+        function renderPeerList(peer, token, works) {
+            const box = document.getElementById('peer-results');
+            if (!works.length) {
+                box.innerHTML = '<p class="share-muted">Peer has no fics yet.</p>';
+                return;
+            }
+            const tokenAttr = escapeHtml(token);
+            box.innerHTML = works.map(w => `
+                <div class="peer-item" data-remote-id="${w.id}">
+                    <div class="peer-meta">
+                        <div class="peer-title">${escapeHtml(w.title)}</div>
+                        <div class="peer-sub">by ${escapeHtml(w.author)}${w.fandom ? ' — ' + escapeHtml(w.fandom) : ''}</div>
+                    </div>
+                    <button class="btn-sm ${w.already_have ? 'btn-update' : 'btn-ao3'}"
+                            ${w.already_have ? 'disabled' : ''}
+                            data-peer="${escapeHtml(peer)}"
+                            data-token="${tokenAttr}"
+                            data-work="${w.id}"
+                            onclick="importFromPeer(this)">
+                        ${w.already_have ? 'Already have' : 'Import'}
+                    </button>
+                </div>
+            `).join('');
+        }
+
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[c]));
+        }
+
+        async function importFromPeer(btn) {
+            const peer = btn.dataset.peer;
+            const token = btn.dataset.token;
+            const workId = parseInt(btn.dataset.work, 10);
+            btn.disabled = true;
+            const original = btn.textContent;
+            btn.innerHTML = '<span class="spinner"></span>Importing...';
+            try {
+                const resp = await fetch('/api/peer/import', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({peer, token, work_id: workId}),
+                });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.detail || 'Import failed');
+                btn.textContent = 'Imported';
+                btn.className = 'btn-sm btn-update';
+                sharePeerStatus(`Imported "${data.title}" (${data.chapters} chapters).`, 'success');
+                setTimeout(() => location.reload(), 900);
+            } catch (e) {
+                sharePeerStatus(e.message, 'error');
+                btn.disabled = false;
+                btn.textContent = original;
+            }
+        }
+
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape') {
+                const ov = document.getElementById('share-overlay');
+                if (ov && ov.classList.contains('visible')) closeShare();
+            }
+        });
 
         // === Keyboard shortcuts ===
         document.getElementById('url-input').addEventListener('keydown', e => {
