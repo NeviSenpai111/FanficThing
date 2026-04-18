@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ work.title }} - Fanficthing</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/api/theme.css">
 </head>
 <body class="reader-body">
     <div class="reading-progress" id="progress"></div>
@@ -25,6 +27,7 @@
             <button onclick="adjustFont(1)" title="Larger text">A+</button>
             <button onclick="toggleSerif()" title="Toggle font" id="font-btn">Serif</button>
             <button onclick="toggleTheme()" title="Toggle dark/light" id="theme-btn">Light</button>
+            <button onclick="toggleHelp()" title="Keyboard shortcuts (?)">?</button>
         </div>
     </nav>
 
@@ -39,6 +42,21 @@
 
     <div class="sidebar-overlay" id="overlay" onclick="toggleSidebar()"></div>
 
+    <div class="help-overlay" id="help-overlay" onclick="if(event.target===this) toggleHelp()">
+        <div class="help-panel">
+            <h3>Keyboard shortcuts</h3>
+            <ul>
+                <li><kbd>←</kbd> / <kbd>→</kbd> <span>Previous / next chapter</span></li>
+                <li><kbd>T</kbd> <span>Toggle chapter list</span></li>
+                <li><kbd>B</kbd> <span>Save / return to bookmark</span></li>
+                <li><kbd>Ctrl</kbd>+<kbd>F</kbd> <span>Search in text</span></li>
+                <li><kbd>?</kbd> <span>Toggle this help</span></li>
+                <li><kbd>Esc</kbd> <span>Close panels</span></li>
+            </ul>
+            <button class="help-close" onclick="toggleHelp()">Close</button>
+        </div>
+    </div>
+
     <div class="reader-sidebar" id="sidebar">
         <div class="sidebar-header">
             <h2>{{ work.title }}</h2>
@@ -47,6 +65,15 @@
             <p class="sidebar-meta">{{ "{:,}".format(work.word_count) }} words</p>
             {% endif %}
             <a class="sidebar-ao3-link" href="{{ work.url }}" target="_blank" rel="noopener">Open on AO3</a>
+            {% if chapters | length > 1 %}
+            <div class="chapter-jump">
+                <label for="chapter-jump-input">Jump to chapter:</label>
+                <input type="number" id="chapter-jump-input" min="1" max="{{ chapters | length }}"
+                       placeholder="1-{{ chapters | length }}"
+                       onkeydown="if(event.key==='Enter') jumpToChapter(this.value)">
+                <button onclick="jumpToChapter(document.getElementById('chapter-jump-input').value)">Go</button>
+            </div>
+            {% endif %}
         </div>
         <div class="chapter-list" id="chapter-list">
             {% for ch in chapters %}
@@ -173,6 +200,16 @@
             document.getElementById('sidebar').classList.remove('open');
             document.getElementById('overlay').classList.remove('visible');
             document.getElementById('chapter-' + idx).scrollIntoView({behavior: 'smooth'});
+        }
+
+        function jumpToChapter(val) {
+            const n = parseInt(val);
+            if (isNaN(n) || n < 1 || n > TOTAL_CHAPTERS) return;
+            goToChapter(n - 1);
+        }
+
+        function toggleHelp() {
+            document.getElementById('help-overlay').classList.toggle('visible');
         }
 
         // ============================================================
@@ -391,9 +428,16 @@
                 toggleBookmark();
             }
 
-            // Escape — close sidebar or search
+            // ? — help overlay
+            if (e.key === '?') {
+                toggleHelp();
+            }
+
+            // Escape — close any open panel
             if (e.key === 'Escape') {
-                if (searchOpen) toggleSearch();
+                const help = document.getElementById('help-overlay');
+                if (help.classList.contains('visible')) toggleHelp();
+                else if (searchOpen) toggleSearch();
                 else if (document.getElementById('sidebar').classList.contains('open')) toggleSidebar();
             }
         });
@@ -418,6 +462,25 @@
 
         // Initial progress update
         updateProgress();
+    </script>
+    <script>
+        // Live-reload wallbash theme
+        (function() {
+            let lastMtime = 0;
+            async function checkTheme() {
+                try {
+                    const resp = await fetch('/api/theme-mtime');
+                    const data = await resp.json();
+                    if (lastMtime && data.mtime !== lastMtime) {
+                        const link = document.querySelector('link[href*="theme.css"]');
+                        if (link) link.href = '/api/theme.css?t=' + Date.now();
+                    }
+                    lastMtime = data.mtime;
+                } catch {}
+            }
+            checkTheme();
+            setInterval(checkTheme, 3000);
+        })();
     </script>
 </body>
 </html>
