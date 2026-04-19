@@ -9,8 +9,19 @@
     <link rel="stylesheet" href="/api/theme.css">
 </head>
 <body>
+    <div class="bg-canvas" aria-hidden="true">
+        <div class="orb orb1"></div>
+        <div class="orb orb2"></div>
+        <div class="orb orb3"></div>
+    </div>
+
     <div class="app">
         <header>
+            <div class="logo-mark">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/>
+                </svg>
+            </div>
             <h1>Fanficthing</h1>
             <p class="subtitle">Your offline AO3 reader</p>
         </header>
@@ -20,8 +31,14 @@
             <button id="add-btn" onclick="addWork()">
                 <span id="btn-text">Download</span>
             </button>
-            <a class="btn-ao3-home" href="https://archiveofourown.org" target="_blank" rel="noopener" title="Browse AO3">AO3</a>
-            <button class="btn-ao3-home" onclick="openShare()" title="Import from a FanficThing on your network">Share</button>
+            <a class="btn-ao3-home" href="https://archiveofourown.org" target="_blank" rel="noopener" title="Browse AO3">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                AO3
+            </a>
+            <button class="btn-ao3-home" onclick="openShare()" title="Import from a FanficThing on your network">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                Share
+            </button>
         </div>
         <div id="status" class="status"></div>
 
@@ -47,6 +64,7 @@
             </div>
             <div class="toolbar-divider"></div>
             <button class="btn-check-all" id="check-all-btn" onclick="checkAllUpdates()" title="Check every fic for updates">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
                 Check all
             </button>
             <div class="toolbar-divider"></div>
@@ -288,7 +306,7 @@
 
         async function checkAllUpdates() {
             const btn = document.getElementById('check-all-btn');
-            const original = btn.textContent;
+            const original = btn.innerHTML;
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner"></span>Checking all...';
             setStatus('Checking every fic for updates — this can take a while...', 'info');
@@ -308,7 +326,7 @@
                 setStatus('Check failed: ' + e.message, 'error');
             } finally {
                 btn.disabled = false;
-                btn.textContent = original;
+                btn.innerHTML = original;
             }
         }
 

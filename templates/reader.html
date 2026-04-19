@@ -9,6 +9,11 @@
     <link rel="stylesheet" href="/api/theme.css">
 </head>
 <body class="reader-body">
+    <div class="bg-canvas" aria-hidden="true">
+        <div class="orb orb1"></div>
+        <div class="orb orb2"></div>
+    </div>
+
     <div class="reading-progress" id="progress"></div>
 
     <nav class="reader-nav">
@@ -199,7 +204,11 @@
         function goToChapter(idx) {
             document.getElementById('sidebar').classList.remove('open');
             document.getElementById('overlay').classList.remove('visible');
-            document.getElementById('chapter-' + idx).scrollIntoView({behavior: 'smooth'});
+            const el = document.getElementById('chapter-' + idx);
+            if (el) {
+                const top = el.getBoundingClientRect().top + window.scrollY - 70;
+                window.scrollTo({top, behavior: 'smooth'});
+            }
         }
 
         function jumpToChapter(val) {
