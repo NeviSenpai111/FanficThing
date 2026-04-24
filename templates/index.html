@@ -27,7 +27,7 @@
         </header>
 
         <div class="add-form">
-            <input type="text" id="url-input" placeholder="Paste an AO3 link..." autocomplete="off" spellcheck="false">
+            <input type="text" id="url-input" placeholder="Paste an AO3 or novelbin link..." autocomplete="off" spellcheck="false">
             <button id="add-btn" onclick="addWork()">
                 <span id="btn-text">Download</span>
             </button>
@@ -118,7 +118,7 @@
                 </div>
                 <div class="work-card-actions">
                     <button class="btn-sm btn-update" onclick="event.stopPropagation(); updateWork({{ work.id }}, this)">Check for updates</button>
-                    <a class="btn-sm btn-ao3" href="{{ work.url }}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Open on AO3</a>
+                    <a class="btn-sm btn-ao3" href="{{ work.url }}" target="_blank" rel="noopener" onclick="event.stopPropagation()">{% if work.ao3_id.startswith('nb_') %}Open on novelbin{% else %}Open on AO3{% endif %}</a>
                     <button class="btn-sm btn-delete" onclick="event.stopPropagation(); deleteWork({{ work.id }})">Remove</button>
                 </div>
             </div>
@@ -232,7 +232,8 @@
                 if (data.status === 'error') throw new Error(data.error || 'Download failed');
 
                 dots = (dots + 1) % 4;
-                setStatus('Downloading from AO3' + '.'.repeat(dots + 1) + ' (this can take a few minutes for long fics)', 'info');
+                const progress = data.progress ? ` — ${data.progress}` : '';
+                setStatus('Downloading' + '.'.repeat(dots + 1) + progress + ' (long novels can take a while)', 'info');
             }
         }
 

@@ -26,10 +26,16 @@ async def startup() -> None:
 async def shutdown() -> None:
     global _playwright, _browser
     if _browser:
-        await _browser.close()
+        try:
+            await _browser.close()
+        except Exception as e:
+            log.warning(f"Browser close failed (already dead?): {e}")
         _browser = None
     if _playwright:
-        await _playwright.stop()
+        try:
+            await _playwright.stop()
+        except Exception as e:
+            log.warning(f"Playwright stop failed: {e}")
         _playwright = None
 
 
