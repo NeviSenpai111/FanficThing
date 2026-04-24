@@ -17,7 +17,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 import ao3
+import novelbin
 import database as db
+
+
+def _pick_scraper(url: str):
+    """Choose the right scraper module for a given source URL."""
+    return novelbin if novelbin.is_novelbin_url(url) else ao3
 
 
 # Track background download jobs: {job_id: {status, title, error, work_id}}
@@ -46,11 +52,60 @@ async def index(request: Request):
 
 
 async def _do_download(job_id: str, url: str):
-    """Background task that downloads a fic."""
+    """Background task that downloads a fic.
+
+    For novelbin we stream chapters straight to the DB so a crash partway
+    through a 1000-chapter novel doesn't lose everything already scraped.
+    """
     try:
         download_jobs[job_id]["status"] = "downloading"
-        data = await ao3.fetch_work(url)
 
+        if novelbin.is_novelbin_url(url):
+            from curl_cffi.requests import AsyncSession
+            async with novelbin._scrape_lock:
+                async with AsyncSession() as session:
+                    meta, chapter_urls = await novelbin.fetch_meta(session, url)
+                    total = len(chapter_urls)
+
+                    db_id = db.upsert_work(
+                        ao3_id=meta["ao3_id"], url=meta["url"], title=meta["title"],
+                        author=meta["author"], summary=meta["summary"], fandom=meta["fandom"],
+                        tags=meta["tags"], rating=meta["rating"],
+                        total_chapters=meta["total_chapters"],
+                        last_updated=meta["last_updated"], word_count=0,
+                    )
+
+                    saved = 0
+                    total_words = 0
+
+                    def on_chapter(ch: dict):
+                        nonlocal saved, total_words
+                        db.upsert_chapter(db_id, ch["index"], ch["title"], ch["content"])
+                        saved += 1
+                        total_words += ch.get("word_count", 0)
+                        download_jobs[job_id]["progress"] = f"{saved}/{total}"
+
+                    await novelbin.fetch_chapters(
+                        session, chapter_urls, on_chapter=on_chapter,
+                    )
+
+                    is_ongoing = "ongoing" in meta.get("last_updated", "").lower()
+                    final_total = f"{saved}/{'?' if is_ongoing else saved}"
+                    db.upsert_work(
+                        ao3_id=meta["ao3_id"], url=meta["url"], title=meta["title"],
+                        author=meta["author"], summary=meta["summary"], fandom=meta["fandom"],
+                        tags=meta["tags"], rating=meta["rating"],
+                        total_chapters=final_total,
+                        last_updated=meta["last_updated"], word_count=total_words,
+                    )
+
+            download_jobs[job_id].update({
+                "status": "done", "title": meta["title"],
+                "chapters": saved, "work_id": db_id,
+            })
+            return
+
+        data = await ao3.fetch_work(url)
         db_id = db.upsert_work(
             ao3_id=data["ao3_id"], url=data["url"], title=data["title"],
             author=data["author"], summary=data["summary"], fandom=data["fandom"],
@@ -58,15 +113,12 @@ async def _do_download(job_id: str, url: str):
             total_chapters=data["total_chapters"], last_updated=data["last_updated"],
             word_count=data.get("word_count", 0),
         )
-
         for ch in data["chapters"]:
             db.upsert_chapter(db_id, ch["index"], ch["title"], ch["content"])
 
         download_jobs[job_id].update({
-            "status": "done",
-            "title": data["title"],
-            "chapters": len(data["chapters"]),
-            "work_id": db_id,
+            "status": "done", "title": data["title"],
+            "chapters": len(data["chapters"]), "work_id": db_id,
         })
     except Exception as e:
         log.error(f"Download failed for {url}: {e}", exc_info=True)
@@ -81,9 +133,10 @@ async def add_work(request: Request):
     global _job_counter
     body = await request.json()
     url = body.get("url", "").strip()
-    work_id = ao3.parse_work_id(url)
+    scraper = _pick_scraper(url)
+    work_id = scraper.parse_work_id(url)
     if not work_id:
-        return JSONResponse({"detail": "Invalid AO3 URL"}, status_code=400)
+        return JSONResponse({"detail": "Unsupported URL (expected AO3 or novelbin)"}, status_code=400)
 
     # Check if already in library
     existing = db.get_work_by_ao3_id(work_id)
@@ -116,6 +169,8 @@ async def job_status(job_id: str):
         return JSONResponse({"detail": "Job not found"}, status_code=404)
 
     resp = {"status": job["status"]}
+    if job.get("progress"):
+        resp["progress"] = job["progress"]
 
     if job["status"] == "done":
         resp["title"] = job.get("title", "")
@@ -129,6 +184,71 @@ async def job_status(job_id: str):
     return JSONResponse(resp)
 
 
+async def _update_one_work(work: dict, stored_count: int) -> dict:
+    """Check one work for new chapters and apply them.
+
+    For novelbin, uses the cheap fetch_meta (landing page + chapter archive,
+    2 HTTP requests) to discover the current chapter count, then only
+    downloads chapters past stored_count. For AO3, the whole work is one
+    page so we just refetch and slice as before.
+
+    Returns {updated, total, last_updated}.
+    """
+    url = work["url"]
+    work_id = work["id"]
+
+    if novelbin.is_novelbin_url(url):
+        from curl_cffi.requests import AsyncSession
+        async with novelbin._scrape_lock:
+            async with AsyncSession() as session:
+                meta, chapter_urls = await novelbin.fetch_meta(session, url)
+                new_total = len(chapter_urls)
+
+                updated = 0
+                new_words = 0
+                if new_total > stored_count:
+                    missing = chapter_urls[stored_count:]
+
+                    def on_chapter(ch: dict):
+                        nonlocal updated, new_words
+                        db.upsert_chapter(work_id, ch["index"], ch["title"], ch["content"])
+                        updated += 1
+                        new_words += ch.get("word_count", 0)
+
+                    await novelbin.fetch_chapters(
+                        session, missing, on_chapter=on_chapter,
+                        start_index=stored_count,
+                    )
+
+                final_word_count = (work.get("word_count") or 0) + new_words
+                db.upsert_work(
+                    ao3_id=meta["ao3_id"], url=meta["url"], title=meta["title"],
+                    author=meta["author"], summary=meta["summary"], fandom=meta["fandom"],
+                    tags=meta["tags"], rating=meta["rating"],
+                    total_chapters=meta["total_chapters"],
+                    last_updated=meta["last_updated"],
+                    word_count=final_word_count,
+                )
+        return {"updated": updated, "total": new_total, "last_updated": meta["last_updated"]}
+
+    # AO3: one-page scrape, slice by stored_count.
+    data = await ao3.fetch_work(url)
+    db.upsert_work(
+        ao3_id=data["ao3_id"], url=data["url"], title=data["title"],
+        author=data["author"], summary=data["summary"], fandom=data["fandom"],
+        tags=data["tags"], rating=data["rating"],
+        total_chapters=data["total_chapters"], last_updated=data["last_updated"],
+        word_count=data.get("word_count", 0),
+    )
+    new_count = len(data["chapters"])
+    updated = 0
+    if new_count > stored_count:
+        for ch in data["chapters"][stored_count:]:
+            db.upsert_chapter(work_id, ch["index"], ch["title"], ch["content"])
+            updated += 1
+    return {"updated": updated, "total": new_count, "last_updated": data["last_updated"]}
+
+
 @app.post("/api/update/{work_id}")
 async def update_work(work_id: int):
     work = db.get_work(work_id)
@@ -136,30 +256,9 @@ async def update_work(work_id: int):
         return JSONResponse({"detail": "Work not found"}, status_code=404)
 
     stored_count = db.get_chapter_count(work_id)
-
     try:
-        data = await ao3.fetch_work(work["url"])
-
-        db.upsert_work(
-            ao3_id=data["ao3_id"], url=data["url"], title=data["title"],
-            author=data["author"], summary=data["summary"], fandom=data["fandom"],
-            tags=data["tags"], rating=data["rating"],
-            total_chapters=data["total_chapters"], last_updated=data["last_updated"],
-            word_count=data.get("word_count", 0),
-        )
-
-        new_count = len(data["chapters"])
-        updated = 0
-        if new_count > stored_count:
-            for ch in data["chapters"][stored_count:]:
-                db.upsert_chapter(work_id, ch["index"], ch["title"], ch["content"])
-                updated += 1
-
-        return JSONResponse({
-            "updated": updated,
-            "total": new_count,
-            "last_updated": data["last_updated"],
-        })
+        result = await _update_one_work(work, stored_count)
+        return JSONResponse(result)
     except Exception as e:
         return JSONResponse({"detail": f"Update check failed: {e}"}, status_code=500)
 
@@ -174,19 +273,9 @@ async def update_all_works():
     for w in works:
         stored_count = db.get_chapter_count(w["id"])
         try:
-            data = await ao3.fetch_work(w["url"])
-            db.upsert_work(
-                ao3_id=data["ao3_id"], url=data["url"], title=data["title"],
-                author=data["author"], summary=data["summary"], fandom=data["fandom"],
-                tags=data["tags"], rating=data["rating"],
-                total_chapters=data["total_chapters"], last_updated=data["last_updated"],
-                word_count=data.get("word_count", 0),
-            )
-            new_count = len(data["chapters"])
-            if new_count > stored_count:
-                for ch in data["chapters"][stored_count:]:
-                    db.upsert_chapter(w["id"], ch["index"], ch["title"], ch["content"])
-                total_new += new_count - stored_count
+            result = await _update_one_work(w, stored_count)
+            if result["updated"]:
+                total_new += result["updated"]
                 updated_works += 1
         except Exception as e:
             log.warning(f"Update-all: failed for {w['title']}: {e}")

@@ -69,7 +69,7 @@
             {% if work.word_count %}
             <p class="sidebar-meta">{{ "{:,}".format(work.word_count) }} words</p>
             {% endif %}
-            <a class="sidebar-ao3-link" href="{{ work.url }}" target="_blank" rel="noopener">Open on AO3</a>
+            <a class="sidebar-ao3-link" href="{{ work.url }}" target="_blank" rel="noopener">{% if work.ao3_id.startswith('nb_') %}Open on novelbin{% else %}Open on AO3{% endif %}</a>
             {% if chapters | length > 1 %}
             <div class="chapter-jump">
                 <label for="chapter-jump-input">Jump to chapter:</label>
