@@ -1,4 +1,4 @@
-"""Novelbin.com scraper.
+"""Novelbin scraper.
 
 Novelbin is fronted by Cloudflare, which successfully blocks headless
 Chromium from solving its JS challenge on chapter pages. Rather than fight
@@ -6,9 +6,13 @@ that, we use `curl_cffi` with Chrome TLS/HTTP2 impersonation to fetch pages
 at the HTTP layer — CF's bot detection is mostly fingerprint-based, so a
 matching TLS fingerprint passes without a challenge at all.
 
-This also lets us hit `/ajax/chapter-archive?novelId=<slug>` to get the
-full chapter list upfront (something Playwright could not do), and keeps
-the download loop free of browser overhead.
+It also keeps the download loop free of browser overhead.
+
+The site moved from novelbin.com to www.novelbin.cc, which serves the
+whole chapter list on the book page (`/book/<slug>/`) instead of the old
+`/ajax/chapter-archive` endpoint. Both layouts are handled below; note
+that slugs are NOT stable across the move, so a work saved from a
+novelbin.com URL has to be re-added from its new .cc link.
 """
 
 import asyncio
@@ -21,10 +25,12 @@ from curl_cffi.requests import AsyncSession
 
 log = logging.getLogger("fanficthing")
 
-BASE = "https://novelbin.com"
+BASE = "https://www.novelbin.cc"
 _IMPERSONATE = "chrome131"
 
-_URL_RE = re.compile(r"novelbin\.(?:com|net|me)/(?:b|novel-book)/([^/?#]+)")
+# Matches every domain/path shape novelbin has used: the current
+# .cc/book/<slug> as well as the older .com|.net|.me /b|/novel-book/<slug>.
+_URL_RE = re.compile(r"novelbin\.[a-z]{2,}/(?:book|b|novel-book)/([^/?#]+)")
 
 _scrape_lock = asyncio.Lock()
 
@@ -54,6 +60,29 @@ def _strip_noise(el) -> None:
         tag.decompose()
 
 
+def _chapter_no(url: str) -> int:
+    """Chapter number out of a .../chapter-<n>[-slug] URL, 0 if absent."""
+    m = re.search(r"/chapter-(\d+)", url.lower())
+    return int(m.group(1)) if m else 0
+
+
+def _chapter_links(roots) -> list[str]:
+    """Absolute, de-duplicated chapter URLs from the given soup elements,
+    keeping document order."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for root in roots:
+        for a in root.select("a[href]"):
+            href = a.get("href", "")
+            if "/chapter-" not in href.lower():
+                continue
+            full = href if href.startswith("http") else BASE + href
+            if full not in seen:
+                seen.add(full)
+                out.append(full)
+    return out
+
+
 async def _get(session: AsyncSession, url: str, *, retries: int = 2) -> str:
     """GET with small retry. Returns the response body text."""
     last_err: Exception | None = None
@@ -78,7 +107,7 @@ async def fetch_meta(session: AsyncSession, url: str) -> tuple[dict, list[str]]:
     if not m:
         raise ValueError("Invalid novelbin URL")
     slug = m.group(1)
-    novel_url = f"{BASE}/b/{slug}"
+    novel_url = f"{BASE}/book/{slug}/"
 
     log.info(f"novelbin: fetching meta for '{slug}'")
     html = await _get(session, novel_url)
@@ -114,32 +143,24 @@ async def fetch_meta(session: AsyncSession, url: str) -> tuple[dict, list[str]]:
     else:
         summary = ""
 
-    novel_id = None
-    book_div = soup.select_one("[data-novel-id]")
-    if book_div:
-        novel_id = book_div.get("data-novel-id")
-    if not novel_id:
-        novel_id = slug
+    # The book page carries the full chapter list, split across a few
+    # .list-chapter columns and already in reading order.
+    chapter_urls = _chapter_links(soup.select(".list-chapter"))
 
-    # Full chapter list comes from the ajax archive endpoint, which
-    # curl_cffi can hit directly.
-    archive_url = f"{BASE}/ajax/chapter-archive?novelId={novel_id}"
-    archive_html = await _get(session, archive_url)
-    asoup = BeautifulSoup(archive_html, "html.parser")
-    chapter_urls: list[str] = []
-    for a in asoup.select("a[href]"):
-        href = a.get("href", "")
-        if "/chapter-" in href.lower():
-            chapter_urls.append(href if href.startswith("http") else BASE + href)
-
-    # Fallback to the landing page's visible list if the archive came back empty.
+    # Older novelbin domains served the list from an ajax endpoint instead.
     if not chapter_urls:
-        for a in soup.select(f"a[href*='/b/{slug}/chapter-']"):
-            href = a.get("href", "")
-            chapter_urls.append(href if href.startswith("http") else BASE + href)
+        book_div = soup.select_one("[data-novel-id]")
+        novel_id = (book_div.get("data-novel-id") if book_div else None) or slug
+        archive_html = await _get(
+            session, f"{BASE}/ajax/chapter-archive?novelId={novel_id}"
+        )
+        chapter_urls = _chapter_links([BeautifulSoup(archive_html, "html.parser")])
 
-    seen: set[str] = set()
-    chapter_urls = [u for u in chapter_urls if not (u in seen or seen.add(u))]
+    # Last resort: any chapter link anywhere on the page. These include the
+    # "latest chapter" shortcuts near the top, so sort by chapter number.
+    if not chapter_urls:
+        chapter_urls = sorted(_chapter_links([soup]), key=_chapter_no)
+
     if not chapter_urls:
         raise ValueError("No chapter links found")
 
