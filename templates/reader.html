@@ -69,7 +69,11 @@
             {% if work.word_count %}
             <p class="sidebar-meta">{{ "{:,}".format(work.word_count) }} words</p>
             {% endif %}
+            {% if work.ao3_id.startswith('ep_') %}
+            <p class="sidebar-meta">Uploaded EPUB</p>
+            {% else %}
             <a class="sidebar-ao3-link" href="{{ work.url }}" target="_blank" rel="noopener">{% if work.ao3_id.startswith('nb_') %}Open on novelbin{% else %}Open on AO3{% endif %}</a>
+            {% endif %}
             {% if chapters | length > 1 %}
             <div class="chapter-jump">
                 <label for="chapter-jump-input">Jump to chapter:</label>

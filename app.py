@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json as _json
 import logging
 import os
@@ -8,6 +9,7 @@ import urllib.error
 import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("fanficthing")
@@ -17,8 +19,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 import ao3
+import epub
 import novelbin
 import database as db
+
+
+def _is_epub_work(work: dict) -> bool:
+    """Uploaded EPUBs have no remote source, so update checks skip them."""
+    return (work.get("ao3_id") or "").startswith("ep_")
 
 
 def _pick_scraper(url: str):
@@ -255,6 +263,12 @@ async def update_work(work_id: int):
     if not work:
         return JSONResponse({"detail": "Work not found"}, status_code=404)
 
+    if _is_epub_work(work):
+        return JSONResponse(
+            {"detail": "Uploaded EPUBs have no source to check for updates."},
+            status_code=400,
+        )
+
     stored_count = db.get_chapter_count(work_id)
     try:
         result = await _update_one_work(work, stored_count)
@@ -271,6 +285,8 @@ async def update_all_works():
     failed = 0
 
     for w in works:
+        if _is_epub_work(w):
+            continue
         stored_count = db.get_chapter_count(w["id"])
         try:
             result = await _update_one_work(w, stored_count)
@@ -282,11 +298,103 @@ async def update_all_works():
             failed += 1
 
     return JSONResponse({
-        "checked": len(works),
+        "checked": sum(1 for w in works if not _is_epub_work(w)),
         "updated_works": updated_works,
         "new_chapters": total_new,
         "failed": failed,
     })
+
+
+# Generous cap — EPUBs with lots of art can be large, but this stops a
+# stray upload from eating all the RAM.
+MAX_EPUB_BYTES = 200 * 1024 * 1024
+
+_ASSET_PREFIX = "ASSET:"
+
+
+def _store_epub(parsed: dict) -> tuple[int, str, int]:
+    """Write a parsed EPUB to the DB. Runs in a worker thread.
+
+    Image sources come out of the parser as 'ASSET:<zip path>' placeholders
+    because the URL needs the work id, which only exists once the work row
+    is written. Returns (work_id, title, chapter_count).
+    """
+    meta = parsed["meta"]
+    work_id = db.upsert_work(
+        ao3_id=meta["ao3_id"], url=meta["url"], title=meta["title"],
+        author=meta["author"], summary=meta["summary"], fandom=meta["fandom"],
+        tags=meta["tags"], rating=meta["rating"],
+        total_chapters=meta["total_chapters"], last_updated=meta["last_updated"],
+        word_count=meta["word_count"],
+    )
+
+    for path, asset in parsed["assets"].items():
+        db.upsert_asset(work_id, path, asset["mime"], asset["data"])
+
+    for ch in parsed["chapters"]:
+        content = re.sub(
+            re.escape(_ASSET_PREFIX) + r"([^\"]*)",
+            lambda m: f"/api/asset/{work_id}/{quote(m.group(1))}",
+            ch["content"],
+        )
+        db.upsert_chapter(work_id, ch["index"], ch["title"], content)
+
+    return work_id, meta["title"], len(parsed["chapters"])
+
+
+@app.post("/api/upload-epub")
+async def upload_epub(request: Request, filename: str = ""):
+    """Accept an EPUB as a raw request body.
+
+    Deliberately not a multipart form: the body is the file, which keeps
+    python-multipart out of the dependency list for no loss of function.
+    """
+    data = await request.body()
+    if not data:
+        return JSONResponse({"detail": "No file received"}, status_code=400)
+    if len(data) > MAX_EPUB_BYTES:
+        return JSONResponse(
+            {"detail": f"File is too large (limit {MAX_EPUB_BYTES // (1024*1024)} MB)"},
+            status_code=413,
+        )
+    if not epub.is_epub(filename, data):
+        return JSONResponse({"detail": "That doesn't look like an EPUB file"}, status_code=400)
+
+    existing = db.get_work_by_ao3_id(epub.work_id_for(data))
+    if existing:
+        return JSONResponse({
+            "status": "duplicate", "title": existing["title"],
+            "work_id": existing["id"],
+            "chapters": db.get_chapter_count(existing["id"]),
+        })
+
+    try:
+        parsed = await asyncio.to_thread(epub.parse_epub, data, filename)
+        work_id, title, chapters = await asyncio.to_thread(_store_epub, parsed)
+    except ValueError as e:
+        return JSONResponse({"detail": str(e)}, status_code=400)
+    except Exception as e:
+        log.error(f"EPUB import failed for {filename!r}: {e}", exc_info=True)
+        return JSONResponse({"detail": f"Couldn't read that EPUB: {e}"}, status_code=500)
+
+    return JSONResponse({
+        "status": "done", "title": title,
+        "chapters": chapters, "work_id": work_id,
+    })
+
+
+@app.get("/api/asset/{work_id}/{path:path}")
+async def epub_asset(work_id: int, path: str):
+    """Serve an image extracted from an uploaded EPUB."""
+    asset = db.get_asset(work_id, path)
+    if not asset:
+        raise HTTPException(404, "Asset not found")
+    return Response(
+        bytes(asset["data"]),
+        media_type=asset["mime"],
+        # Assets are immutable for the life of the work.
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
 
 
 @app.get("/read/{work_id}", response_class=HTMLResponse)
@@ -395,6 +503,11 @@ async def export_work(work_id: int, request: Request):
         return JSONResponse({"detail": "Not found"}, status_code=404)
     chapters = db.get_chapters(work_id)
     return {
+        "assets": [
+            {"path": a["path"], "mime": a["mime"],
+             "data": base64.b64encode(bytes(a["data"])).decode("ascii")}
+            for a in db.get_assets(work_id)
+        ],
         "work": {
             "ao3_id": work["ao3_id"], "url": work["url"], "title": work["title"],
             "author": work["author"], "summary": work["summary"],
@@ -467,8 +580,17 @@ async def peer_import(request: Request):
         total_chapters=w["total_chapters"], last_updated=w["last_updated"],
         word_count=w.get("word_count", 0),
     )
+    for asset in payload.get("assets", []):
+        db.upsert_asset(
+            db_id, asset["path"], asset["mime"], base64.b64decode(asset["data"])
+        )
+
+    # Asset URLs embed the work id, which differs on this machine.
     for ch in payload["chapters"]:
-        db.upsert_chapter(db_id, ch["index"], ch["title"], ch["content"])
+        content = re.sub(
+            r"/api/asset/\d+/", f"/api/asset/{db_id}/", ch["content"]
+        )
+        db.upsert_chapter(db_id, ch["index"], ch["title"], content)
     return {
         "ok": True, "title": w["title"],
         "chapters": len(payload["chapters"]), "work_id": db_id,

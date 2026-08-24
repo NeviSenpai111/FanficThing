@@ -43,6 +43,16 @@ def init_db():
             UNIQUE(work_id, chapter_index)
         );
 
+        CREATE TABLE IF NOT EXISTS assets (
+            id INTEGER PRIMARY KEY,
+            work_id INTEGER NOT NULL,
+            path TEXT NOT NULL,
+            mime TEXT NOT NULL,
+            data BLOB NOT NULL,
+            FOREIGN KEY (work_id) REFERENCES works(id) ON DELETE CASCADE,
+            UNIQUE(work_id, path)
+        );
+
         CREATE TABLE IF NOT EXISTS reading_progress (
             work_id INTEGER PRIMARY KEY,
             chapter_index INTEGER DEFAULT 0,
@@ -92,6 +102,40 @@ def upsert_chapter(work_id: int, chapter_index: int, title: str, content: str):
     """, (work_id, chapter_index, title, content))
     db.commit()
     db.close()
+
+
+def upsert_asset(work_id: int, path: str, mime: str, data: bytes):
+    """Store one embedded file (an EPUB image) for a work."""
+    db = get_db()
+    db.execute("""
+        INSERT INTO assets (work_id, path, mime, data)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(work_id, path) DO UPDATE SET
+            mime=excluded.mime, data=excluded.data
+    """, (work_id, path, mime, sqlite3.Binary(data)))
+    db.commit()
+    db.close()
+
+
+def get_assets(work_id: int) -> list[dict]:
+    """Every stored asset for a work, for LAN export."""
+    db = get_db()
+    rows = db.execute(
+        "SELECT path, mime, data FROM assets WHERE work_id = ?", (work_id,)
+    ).fetchall()
+    result = [{"path": r["path"], "mime": r["mime"], "data": r["data"]} for r in rows]
+    db.close()
+    return result
+
+
+def get_asset(work_id: int, path: str) -> dict | None:
+    db = get_db()
+    row = db.execute(
+        "SELECT mime, data FROM assets WHERE work_id = ? AND path = ?",
+        (work_id, path),
+    ).fetchone()
+    db.close()
+    return {"mime": row["mime"], "data": row["data"]} if row else None
 
 
 def _enrich_work(row: dict) -> dict:
@@ -154,6 +198,7 @@ def get_chapter_count(work_id: int) -> int:
 def delete_work(work_id: int):
     db = get_db()
     db.execute("DELETE FROM chapters WHERE work_id = ?", (work_id,))
+    db.execute("DELETE FROM assets WHERE work_id = ?", (work_id,))
     db.execute("DELETE FROM reading_progress WHERE work_id = ?", (work_id,))
     db.execute("DELETE FROM works WHERE id = ?", (work_id,))
     db.commit()

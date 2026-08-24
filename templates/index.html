@@ -23,13 +23,19 @@
                 </svg>
             </div>
             <h1>Fanficthing</h1>
-            <p class="subtitle">Your offline AO3 reader</p>
+            <p class="subtitle">Your offline reading library</p>
         </header>
 
         <div class="add-form">
-            <input type="text" id="url-input" placeholder="Paste an AO3 or novelbin link..." autocomplete="off" spellcheck="false">
+            <input type="text" id="url-input" placeholder="Paste an AO3 or novelbin link, or drop an EPUB..." autocomplete="off" spellcheck="false">
             <button id="add-btn" onclick="addWork()">
                 <span id="btn-text">Download</span>
+            </button>
+            <input type="file" id="epub-input" accept=".epub,application/epub+zip" multiple hidden
+                   onchange="uploadEpubs(this.files); this.value='';">
+            <button class="btn-ao3-home" onclick="document.getElementById('epub-input').click()" title="Add an EPUB from your computer">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                EPUB
             </button>
             <a class="btn-ao3-home" href="https://archiveofourown.org" target="_blank" rel="noopener" title="Browse AO3">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
@@ -89,6 +95,9 @@
                         {% if work.rating %}
                         <div class="work-rating">{{ work.rating }}</div>
                         {% endif %}
+                        {% if work.ao3_id.startswith('ep_') %}
+                        <div class="work-format-badge" title="Uploaded EPUB">EPUB</div>
+                        {% endif %}
                         {% if work.read_chapter is not none %}
                         <div class="reading-badge" title="Reading progress">
                             {% set total = work.total_chapters.split('/')[0] if '/' in work.total_chapters else '?' %}
@@ -117,8 +126,10 @@
                     </div>
                 </div>
                 <div class="work-card-actions">
+                    {% if not work.ao3_id.startswith('ep_') %}
                     <button class="btn-sm btn-update" onclick="event.stopPropagation(); updateWork({{ work.id }}, this)">Check for updates</button>
                     <a class="btn-sm btn-ao3" href="{{ work.url }}" target="_blank" rel="noopener" onclick="event.stopPropagation()">{% if work.ao3_id.startswith('nb_') %}Open on novelbin{% else %}Open on AO3{% endif %}</a>
+                    {% endif %}
                     <button class="btn-sm btn-delete" onclick="event.stopPropagation(); deleteWork({{ work.id }})">Remove</button>
                 </div>
             </div>
@@ -127,13 +138,20 @@
             {% if not works %}
             <div class="empty-state">
                 <p>~</p>
-                <p>Your library is empty. Paste an AO3 link above to get started.</p>
+                <p>Your library is empty. Paste an AO3 or novelbin link above, or drop an EPUB anywhere on this page.</p>
             </div>
             {% endif %}
         </div>
 
         <div class="empty-search" id="empty-search" style="display:none">
             <p>No fics match your search.</p>
+        </div>
+    </div>
+
+    <div class="drop-overlay" id="drop-overlay" aria-hidden="true">
+        <div class="drop-panel">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <p>Drop EPUB files to add them to your library</p>
         </div>
     </div>
 
@@ -280,6 +298,93 @@
                 btnText.textContent = 'Download';
             }
         }
+
+        // === EPUB upload ===
+        function isEpubFile(f) {
+            return /\.epub$/i.test(f.name) || f.type === 'application/epub+zip';
+        }
+
+        async function uploadEpubs(fileList) {
+            const files = [...fileList].filter(isEpubFile);
+            if (!files.length) {
+                setStatus('Only .epub files can be added this way.', 'error');
+                return;
+            }
+
+            let added = 0, duplicates = 0;
+            const failures = [];
+
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                const step = files.length > 1 ? `(${i + 1}/${files.length}) ` : '';
+                setStatus(`${step}Importing "${file.name}"...`, 'info');
+                try {
+                    // The request body is the file itself — no multipart needed.
+                    const resp = await fetch(
+                        '/api/upload-epub?filename=' + encodeURIComponent(file.name),
+                        {method: 'POST', headers: {'Content-Type': 'application/epub+zip'}, body: file},
+                    );
+                    const text = await resp.text();
+                    let data;
+                    try { data = JSON.parse(text); } catch { throw new Error('Server returned an invalid response'); }
+                    if (!resp.ok) throw new Error(data.detail || 'Import failed');
+
+                    if (data.status === 'duplicate') {
+                        duplicates++;
+                        setStatus(`${step}"${data.title}" is already in your library.`, 'info');
+                    } else {
+                        added++;
+                        setStatus(`${step}Added "${data.title}" (${data.chapters} chapters)`, 'success');
+                    }
+                } catch (e) {
+                    failures.push(`${file.name}: ${e.message}`);
+                }
+            }
+
+            // One summary line once everything has been tried.
+            if (failures.length && !added && !duplicates) {
+                setStatus(failures.length === 1 ? `Couldn't import ${failures[0]}`
+                                                : `Couldn't import ${failures.length} file(s).`, 'error');
+            } else if (failures.length) {
+                setStatus(`Added ${added}, skipped ${duplicates} duplicate(s), ${failures.length} failed.`, 'error');
+            } else if (files.length > 1) {
+                setStatus(`Added ${added} book(s)${duplicates ? `, ${duplicates} already in library` : ''}.`, 'success');
+            }
+            if (failures.length) console.warn('EPUB import failures:', failures);
+
+            if (added) setTimeout(() => location.reload(), 900);
+        }
+
+        // === Drag and drop anywhere on the page ===
+        (function setupDropZone() {
+            const overlay = document.getElementById('drop-overlay');
+            let depth = 0;
+
+            const dragHasFiles = e =>
+                e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+            const show = () => overlay.classList.add('visible');
+            const hide = () => { depth = 0; overlay.classList.remove('visible'); };
+
+            window.addEventListener('dragenter', e => {
+                if (!dragHasFiles(e)) return;
+                e.preventDefault();
+                depth++;
+                show();
+            });
+            window.addEventListener('dragover', e => {
+                if (dragHasFiles(e)) e.preventDefault();
+            });
+            window.addEventListener('dragleave', e => {
+                if (!dragHasFiles(e)) return;
+                if (--depth <= 0) hide();
+            });
+            window.addEventListener('drop', e => {
+                if (!dragHasFiles(e)) return;
+                e.preventDefault();
+                hide();
+                if (e.dataTransfer.files.length) uploadEpubs(e.dataTransfer.files);
+            });
+        })();
 
         async function updateWork(id, btn) {
             const original = btn.textContent;
