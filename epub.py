@@ -14,6 +14,7 @@ can be served back from the DB.
 """
 
 import hashlib
+import io
 import logging
 import posixpath
 import re
@@ -60,7 +61,7 @@ def is_epub(filename: str, data: bytes) -> bool:
     if (filename or "").lower().endswith(".epub"):
         return True
     try:
-        with zipfile.ZipFile(_bytes_io(data)) as z:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
             return CONTAINER_PATH in z.namelist()
     except zipfile.BadZipFile:
         return False
@@ -70,11 +71,6 @@ def work_id_for(data: bytes) -> str:
     """Content-addressed id, so re-uploading the same file updates the
     existing library entry instead of duplicating it."""
     return "ep_" + hashlib.sha256(data).hexdigest()[:16]
-
-
-def _bytes_io(data: bytes):
-    import io
-    return io.BytesIO(data)
 
 
 def _resolve(base_path: str, href: str) -> str:
@@ -296,7 +292,7 @@ def parse_epub(data: bytes, filename: str) -> dict:
     rewrite once the work has a database id.
     """
     try:
-        zf = zipfile.ZipFile(_bytes_io(data))
+        zf = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile as e:
         raise ValueError(f"Not a readable EPUB file: {e}") from e
 

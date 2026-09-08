@@ -16,6 +16,8 @@
     --accent-glow: rgba(192, 132, 252, 0.15);
     --accent-dim: rgba(192, 132, 252, 0.08);
     --border-accent: rgba(192, 132, 252, 0.35);
+    --orb1: #7c3aed;
+    --orb2: #db2777;
     --text: #ede9f8;
     --text2: #9490b0;
     --text3: #4a4760;
@@ -98,7 +100,7 @@ body {
 .orb1 {
     width: 600px;
     height: 600px;
-    background: radial-gradient(circle, #7c3aed, transparent);
+    background: radial-gradient(circle, var(--orb1), transparent);
     top: -100px;
     left: -100px;
     --d: 28s;
@@ -107,7 +109,7 @@ body {
 .orb2 {
     width: 500px;
     height: 500px;
-    background: radial-gradient(circle, #db2777, transparent);
+    background: radial-gradient(circle, var(--orb2), transparent);
     bottom: -50px;
     right: -80px;
     --d: 34s;
@@ -1277,13 +1279,23 @@ header h1 {
 }
 
 .reader-footer {
-    text-align: center;
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 0.6rem;
     padding: 2.5rem;
     border-top: 1px solid var(--card-border);
     margin-top: 2rem;
 }
 
-.reader-footer a {
+.reader-footer a[hidden] { display: none; }
+
+.chapter-prev {
+    text-align: center;
+    margin-bottom: 2.5rem;
+}
+
+.reader-footer a, .chapter-prev a {
     color: var(--text2);
     text-decoration: none;
     font-family: var(--font);
@@ -1298,7 +1310,7 @@ header h1 {
     transition: color 0.2s, border-color 0.2s, background 0.2s;
 }
 
-.reader-footer a:hover {
+.reader-footer a:hover, .chapter-prev a:hover {
     color: var(--accent);
     border-color: var(--border-accent);
     background: var(--accent-dim);
@@ -1445,6 +1457,18 @@ mark.search-hl-active {
     user-select: all;
 }
 
+.share-qr {
+    width: fit-content;
+    padding: 8px;
+    margin-bottom: 0.75rem;
+    background: #fff;
+    border-radius: 8px;
+}
+
+.share-qr:empty { display: none; }
+
+.share-qr svg { display: block; }
+
 .share-copy {
     margin-left: 0.35rem;
     padding: 0.1rem 0.5rem;
@@ -1555,6 +1579,9 @@ mark.search-hl-active {
     .work-header h1 { font-size: 1.65rem; }
     .work-card-body { padding: 1.25rem; }
     .text-search-bar input { width: 130px; }
+    .reader-nav { padding: 0 0.6rem; }
+    .reader-controls { gap: 0.2rem; }
+    .reader-controls button { padding: 0.35rem 0.45rem; }
 }
 
 /* ============================================================

@@ -41,7 +41,6 @@ async def shutdown() -> None:
 
 async def _get_browser() -> Browser:
     """Return the shared browser, (re)launching it if missing/closed."""
-    global _browser
     if _browser is None or not _browser.is_connected():
         await startup()
     return _browser  # type: ignore[return-value]

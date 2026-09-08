@@ -158,6 +158,8 @@
     <div class="help-overlay" id="share-overlay" onclick="if(event.target===this)closeShare()">
         <div class="help-panel share-panel">
             <h3>Share with a FanficThing on your network</h3>
+            <p class="share-hint">On your phone (same Wi-Fi): <code id="share-phone-url">...</code></p>
+            <div class="share-qr" id="share-qr"></div>
             <p class="share-hint">Your address: <code id="share-self"></code></p>
             <p class="share-hint">Your token:
                 <code id="share-token">...</code>
@@ -245,6 +247,8 @@
                 const text = await resp.text();
                 let data;
                 try { data = JSON.parse(text); } catch { throw new Error('Lost connection to server'); }
+                if (resp.status === 404) throw new Error('The download was lost (did the server restart?). Please try again.');
+                if (!resp.ok) throw new Error(data.detail || 'Download failed');
 
                 if (data.status === 'done') return data;
                 if (data.status === 'error') throw new Error(data.error || 'Download failed');
@@ -451,6 +455,15 @@
         async function openShare() {
             document.getElementById('share-self').textContent = location.host;
             document.getElementById('share-overlay').classList.add('visible');
+            try {
+                const resp = await fetch('/api/lan-address');
+                const data = await resp.json();
+                document.getElementById('share-phone-url').textContent = data.url || 'not connected to a network';
+                document.getElementById('share-qr').innerHTML = data.qr || '';
+                if (data.url) document.getElementById('share-self').textContent = data.url.replace('http://', '');
+            } catch {
+                document.getElementById('share-phone-url').textContent = '(unavailable)';
+            }
             if (!_myToken) {
                 try {
                     const resp = await fetch('/api/share-token');

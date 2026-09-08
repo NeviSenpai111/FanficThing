@@ -89,7 +89,7 @@
             <a href="#chapter-{{ ch.chapter_index }}"
                class="chapter-link"
                data-index="{{ ch.chapter_index }}"
-               onclick="goToChapter({{ ch.chapter_index }})">
+               onclick="goToChapter({{ ch.chapter_index }}); return false;">
                 {{ ch.chapter_index + 1 }}. {{ ch.title or 'Chapter ' ~ (ch.chapter_index + 1) }}
             </a>
             {% endfor %}
@@ -101,6 +101,7 @@
     </button>
 
     <main class="reader-content" id="reader-content">
+        {% if start == 0 %}
         <div class="work-header">
             <h1>{{ work.title }}</h1>
             <p class="work-author">by {{ work.author }}</p>
@@ -122,21 +123,31 @@
             </div>
             {% endif %}
         </div>
+        {% endif %}
 
-        {% for ch in chapters %}
-        <article class="chapter" id="chapter-{{ ch.chapter_index }}" data-index="{{ ch.chapter_index }}">
+        {% if start > 0 %}
+        <div class="chapter-prev">
+            <a href="/read/{{ work.id }}?ch={{ start - 1 }}">&larr; Previous chapter</a>
+        </div>
+        {% endif %}
+
+        {% if chapter %}
+        <article class="chapter" id="chapter-{{ chapter.chapter_index }}" data-index="{{ chapter.chapter_index }}">
             <h2 class="chapter-heading">
                 {% if chapters | length > 1 %}
-                Chapter {{ ch.chapter_index + 1 }}{% if ch.title %}: {{ ch.title }}{% endif %}
+                Chapter {{ chapter.chapter_index + 1 }}{% if chapter.title %}: {{ chapter.title }}{% endif %}
                 {% endif %}
             </h2>
             <div class="chapter-text">
-                {{ ch.content | safe }}
+                {{ chapter.content | safe }}
             </div>
         </article>
-        {% endfor %}
+        {% endif %}
 
-        <div class="reader-footer">
+        <div class="reader-footer" id="reader-footer">
+            <a href="/read/{{ work.id }}?ch={{ start + 1 }}" id="next-link"
+               onclick="goToChapter(loadedMax + 1); return false;"
+               {% if start >= chapters | length - 1 %}hidden{% endif %}>Next chapter &rarr;</a>
             <a href="/">Back to Library</a>
         </div>
     </main>
@@ -145,6 +156,13 @@
         const content = document.getElementById('reader-content');
         const WORK_ID = {{ work.id }};
         const TOTAL_CHAPTERS = {{ chapters|length }};
+        const IS_EPUB = {{ 'true' if work.ao3_id.startswith('ep_') else 'false' }};
+        const START = {{ start }};
+        const NAV_OFFSET = 70;
+        // The page holds chapters START..loadedMax; more are appended as you scroll.
+        let loadedMax = START;
+        // Reloading always resumes from the saved position rather than a stale ?ch=.
+        history.replaceState(null, '', '/read/' + WORK_ID);
 
         // ============================================================
         //  Font size
@@ -173,7 +191,7 @@
         function applyFont() {
             content.style.fontFamily = useSerif
                 ? "'Lora', 'Georgia', serif"
-                : "'Inter', -apple-system, system-ui, sans-serif";
+                : "'Outfit', -apple-system, system-ui, sans-serif";
             document.getElementById('font-btn').textContent = useSerif ? 'Sans' : 'Serif';
             document.getElementById('font-btn').classList.toggle('active', !useSerif);
         }
@@ -205,15 +223,66 @@
             document.getElementById('overlay').classList.toggle('visible');
         }
 
-        function goToChapter(idx) {
+        async function goToChapter(idx) {
             document.getElementById('sidebar').classList.remove('open');
             document.getElementById('overlay').classList.remove('visible');
+            if (idx === loadedMax + 1) await loadNext();
             const el = document.getElementById('chapter-' + idx);
-            if (el) {
-                const top = el.getBoundingClientRect().top + window.scrollY - 70;
-                window.scrollTo({top, behavior: 'smooth'});
+            if (!el) {
+                // Not in the page: load a fresh page starting at that chapter.
+                location.href = `/read/${WORK_ID}?ch=${idx}`;
+                return;
+            }
+            const top = el.getBoundingClientRect().top + window.scrollY - NAV_OFFSET;
+            window.scrollTo({top, behavior: 'smooth'});
+        }
+
+        // ============================================================
+        //  Chapter loading (one at a time, appended as you read)
+        // ============================================================
+        let loading = false;
+
+        async function loadNext() {
+            if (loading || loadedMax >= TOTAL_CHAPTERS - 1) return;
+            loading = true;
+            try {
+                const resp = await fetch(`/api/chapter/${WORK_ID}/${loadedMax + 1}`);
+                if (!resp.ok) throw new Error(resp.status);
+                const ch = await resp.json();
+
+                const article = document.createElement('article');
+                article.className = 'chapter';
+                article.id = 'chapter-' + ch.chapter_index;
+                article.dataset.index = ch.chapter_index;
+                const heading = document.createElement('h2');
+                heading.className = 'chapter-heading';
+                if (TOTAL_CHAPTERS > 1) {
+                    heading.textContent = `Chapter ${ch.chapter_index + 1}` + (ch.title ? `: ${ch.title}` : '');
+                }
+                const text = document.createElement('div');
+                text.className = 'chapter-text';
+                text.innerHTML = ch.content;
+                article.append(heading, text);
+                document.getElementById('reader-footer').before(article);
+
+                loadedMax = ch.chapter_index;
+                const next = document.getElementById('next-link');
+                next.hidden = loadedMax >= TOTAL_CHAPTERS - 1;
+                next.href = `/read/${WORK_ID}?ch=${loadedMax + 1}`;
+                maybeLoadNext();  // very short chapters may still leave the page near its end
+            } catch (e) {
+                // Leave the Next link as a plain page load so reading can continue.
+            } finally {
+                loading = false;
             }
         }
+
+        function maybeLoadNext() {
+            const remaining = document.documentElement.scrollHeight - (window.scrollY + window.innerHeight);
+            if (remaining < window.innerHeight * 1.5) loadNext();
+        }
+
+        window.addEventListener('scroll', maybeLoadNext, {passive: true});
 
         function jumpToChapter(val) {
             const n = parseInt(val);
@@ -228,11 +297,12 @@
         // ============================================================
         //  Reading progress bar + current chapter tracking
         // ============================================================
-        let currentChapter = 0;
+        let currentChapter = START;
+        let chapterPct = 0;  // how far into the current chapter the top of the view is
 
         function getCurrentChapter() {
             const articles = document.querySelectorAll('.chapter');
-            let current = 0;
+            let current = START;
             articles.forEach(a => {
                 if (a.getBoundingClientRect().top < window.innerHeight / 2) {
                     current = parseInt(a.dataset.index);
@@ -242,11 +312,15 @@
         }
 
         function updateProgress() {
-            const winH = document.documentElement.scrollHeight - window.innerHeight;
-            const pct = winH > 0 ? (window.scrollY / winH) * 100 : 0;
-            document.getElementById('progress').style.width = pct + '%';
-
             currentChapter = getCurrentChapter();
+            const el = document.getElementById('chapter-' + currentChapter);
+            if (el) {
+                const r = el.getBoundingClientRect();
+                chapterPct = Math.max(0, Math.min(100, (NAV_OFFSET - r.top) / r.height * 100));
+            }
+            // Bar shows progress through the whole book, not just the loaded part.
+            const pct = TOTAL_CHAPTERS ? (currentChapter + chapterPct / 100) / TOTAL_CHAPTERS * 100 : 0;
+            document.getElementById('progress').style.width = pct + '%';
 
             // Highlight current chapter in sidebar
             document.querySelectorAll('.chapter-link').forEach(l => {
@@ -263,25 +337,24 @@
         function savePosition() {
             clearTimeout(saveTimeout);
             saveTimeout = setTimeout(() => {
-                const winH = document.documentElement.scrollHeight - window.innerHeight;
-                const pct = winH > 0 ? (window.scrollY / winH) * 100 : 0;
                 fetch(`/api/progress/${WORK_ID}`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({chapter: currentChapter, scroll: pct}),
+                    body: JSON.stringify({chapter: currentChapter, scroll: chapterPct}),
                 }).catch(() => {});
             }, 1000);
         }
 
         window.addEventListener('scroll', savePosition, {passive: true});
 
-        // Restore position on load
-        {% if progress %}
+        // Restore position within the starting chapter
+        {% if progress and restore %}
         window.addEventListener('DOMContentLoaded', () => {
             const savedScroll = {{ progress.scroll_pct }};
-            if (savedScroll > 1) {
-                const winH = document.documentElement.scrollHeight - window.innerHeight;
-                window.scrollTo(0, (savedScroll / 100) * winH);
+            const el = document.getElementById('chapter-' + START);
+            if (el && savedScroll > 1) {
+                const top = el.getBoundingClientRect().top + window.scrollY - NAV_OFFSET;
+                window.scrollTo(0, top + (savedScroll / 100) * el.offsetHeight);
             }
         });
         {% endif %}
@@ -459,6 +532,7 @@
         //  Auto-check for updates on load
         // ============================================================
         (async function checkUpdates() {
+            if (IS_EPUB) return;  // uploaded books have no source to check
             try {
                 const resp = await fetch(`/api/update/${WORK_ID}`, {method: 'POST'});
                 const text = await resp.text();
@@ -473,8 +547,9 @@
             } catch (e) {}
         })();
 
-        // Initial progress update
+        // Initial progress update; a short first chapter may need the next one right away
         updateProgress();
+        maybeLoadNext();
     </script>
     <script>
         // Live-reload wallbash theme

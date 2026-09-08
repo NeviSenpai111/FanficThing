@@ -18,7 +18,7 @@ novelbin.com URL has to be re-added from its new .cc link.
 import asyncio
 import logging
 import re
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 from bs4 import BeautifulSoup
 from curl_cffi.requests import AsyncSession
@@ -26,7 +26,9 @@ from curl_cffi.requests import AsyncSession
 log = logging.getLogger("fanficthing")
 
 BASE = "https://www.novelbin.cc"
-_IMPERSONATE = "chrome131"
+# curl_cffi's rolling alias for its newest Chrome fingerprint, so upgrading
+# the library keeps the impersonation current without touching this file.
+_IMPERSONATE = "chrome"
 
 # Matches every domain/path shape novelbin has used: the current
 # .cc/book/<slug> as well as the older .com|.net|.me /b|/novel-book/<slug>.

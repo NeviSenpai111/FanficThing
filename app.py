@@ -2,26 +2,32 @@ import asyncio
 import base64
 import json as _json
 import logging
-import os
 import re
 import secrets
+import socket
 import urllib.error
 import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote
 
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("fanficthing")
-from fastapi import FastAPI, Request, HTTPException
+import segno
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 import ao3
+import database as db
 import epub
 import novelbin
-import database as db
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("fanficthing")
+
+# Resolve bundled files relative to this module so the app works no matter
+# which directory uvicorn is launched from.
+BASE_DIR = Path(__file__).resolve().parent
 
 
 def _is_epub_work(work: dict) -> bool:
@@ -49,8 +55,8 @@ async def lifespan(app: FastAPI):
         await ao3.shutdown()
 
 app = FastAPI(lifespan=lifespan)
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
+app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -398,15 +404,29 @@ async def epub_asset(work_id: int, path: str):
 
 
 @app.get("/read/{work_id}", response_class=HTMLResponse)
-async def read_work(request: Request, work_id: int):
+async def read_work(request: Request, work_id: int, ch: int | None = None):
     work = db.get_work(work_id)
     if not work:
         raise HTTPException(404, "Work not found")
-    chapters = db.get_chapters(work_id)
+    chapters = db.get_chapter_titles(work_id)
     progress = db.get_progress(work_id)
+    # Only the starting chapter is sent; the page fetches the rest as you read.
+    # Without an explicit ?ch= we resume where the reader left off.
+    start = ch if ch is not None else (progress["chapter_index"] if progress else 0)
+    start = max(0, min(start, len(chapters) - 1))
     return templates.TemplateResponse(request, "reader.html", {
         "work": work, "chapters": chapters, "progress": progress,
+        "start": start, "chapter": db.get_chapter(work_id, start),
+        "restore": ch is None,
     })
+
+
+@app.get("/api/chapter/{work_id}/{index}")
+async def get_chapter(work_id: int, index: int):
+    chapter = db.get_chapter(work_id, index)
+    if not chapter:
+        raise HTTPException(404, "Chapter not found")
+    return chapter
 
 
 @app.post("/api/progress/{work_id}")
@@ -445,7 +465,7 @@ async def remove_work(work_id: int):
 
 # === LAN peer sharing ===
 _PEER_RE = re.compile(r"^[A-Za-z0-9._-]+(?::\d{1,5})?$")
-_TOKEN_PATH = Path(__file__).parent / "data" / "share_token.txt"
+_TOKEN_PATH = BASE_DIR / "data" / "share_token.txt"
 
 
 def _load_or_create_token() -> str:
@@ -493,6 +513,27 @@ async def _peer_get(peer: str, path: str, token: str):
 async def share_token():
     """Local-UI helper: expose this instance's share token so the owner can copy it."""
     return {"token": SHARE_TOKEN}
+
+
+def _lan_ip() -> str | None:
+    """IP of the interface that carries the default route (no packet is sent)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.255.255.255", 1))
+            return s.getsockname()[0]
+    except OSError:
+        return None
+
+
+@app.get("/api/lan-address")
+async def lan_address(request: Request):
+    """Local-UI helper: the URL a phone on the same network can open, plus a QR code for it."""
+    ip = _lan_ip()
+    if not ip:
+        return {"url": None, "qr": None}
+    url = f"http://{ip}:{request.url.port or 80}"
+    qr = segno.make(url, error="l").svg_inline(scale=5, dark="#000", light=None)
+    return {"url": url, "qr": qr}
 
 
 @app.get("/api/export/{work_id}")
@@ -631,12 +672,18 @@ async def wallbash_theme():
     text2 = colors.get("dcol_1xa5", "8b88a2")
     text3 = colors.get("dcol_1xa3", "5c5a6e")
     card_border = colors.get("dcol_1xa2", "1e1e32")
+    # Background orbs: primary hue for orb1, the most distinct
+    # secondary hue in the palette for orb2.
+    orb1 = colors.get("dcol_1xa5", accent)
+    orb2 = colors.get("dcol_4xa5", colors.get("dcol_2xa5", accent2))
 
     # Light theme from the lighter end of the palette
     light_bg = colors.get("dcol_pry4", "faf9f7")
     light_bg2 = colors.get("dcol_1xa9", "f0eeeb")
     light_accent = colors.get("dcol_1xa4", "7c3aed")
     light_text = colors.get("dcol_txt4", "1a1a2e")
+    light_orb1 = colors.get("dcol_1xa4", light_accent)
+    light_orb2 = colors.get("dcol_4xa4", colors.get("dcol_2xa4", light_accent))
 
     css = f""":root {{
     --bg: #{bg};
@@ -649,6 +696,8 @@ async def wallbash_theme():
     --accent2: #{accent2};
     --accent-glow: #{accent}26;
     --accent-dim: #{accent}14;
+    --orb1: #{orb1};
+    --orb2: #{orb2};
     --text: #{text};
     --text2: #{text2};
     --text3: #{text3};
@@ -665,6 +714,8 @@ async def wallbash_theme():
     --accent2: #{light_accent};
     --accent-glow: #{light_accent}22;
     --accent-dim: #{light_accent}0d;
+    --orb1: #{light_orb1};
+    --orb2: #{light_orb2};
     --text: #{light_text};
     --text2: #{light_accent};
     --text3: #{light_accent}88;
